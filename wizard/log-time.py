@@ -59,22 +59,35 @@ def read_mac_notes(script_dir):
 def read_stickies(script_dir):
     """Read Stickies notes from the macOS Stickies container directory.
     On macOS Catalina+, each note is stored as an .rtfd package containing TXT.rtf.
-    We strip RTF markup and return the plain text of all notes joined by '---'.
+    Selects only the most recently modified note that contains BOTH a date AND
+    at least one time range (HH:MM-->HH:MM). This prevents concatenating all notes
+    and logging entries from old/reference notes.
     """
     import re as _re
     stickies_dir = Path.home() / "Library/Containers/com.apple.stickies/Data/Library/Stickies"
     if not stickies_dir.exists():
-        # Fallback: older macOS path (pre-Catalina)
         stickies_dir = Path.home() / "Library/Containers/Stickies/Data/Library/Stickies"
     if not stickies_dir.exists():
         print(f"ERROR: Stickies directory not found at {stickies_dir}", file=sys.stderr)
         print("Make sure Stickies.app has been opened at least once.", file=sys.stderr)
         sys.exit(1)
 
-    rtfd_packages = sorted(stickies_dir.glob("*.rtfd"))
+    rtfd_packages = list(stickies_dir.glob("*.rtfd"))
     if not rtfd_packages:
         print("No Stickies notes found — make sure you have at least one note created.", file=sys.stderr)
         sys.exit(0)
+
+    # Sort by modification time, most recent first
+    rtfd_packages.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    # Patterns for qualifying a note: must have a date AND a time range
+    _date_re = _re.compile(
+        r'\b(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?'
+        r'|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}'
+        r'|(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2})\b',
+        _re.IGNORECASE
+    )
+    _time_range_re = _re.compile(r'\d{1,2}:\d{2}\s*(?:-->|->|–>|—>|-)\s*\d{1,2}:\d{2}')
 
     def strip_rtf(rtf_bytes):
         """Extract plain text from RTF content."""
@@ -82,32 +95,45 @@ def read_stickies(script_dir):
             text = rtf_bytes.decode("utf-8", errors="replace")
         except Exception:
             text = rtf_bytes.decode("latin-1", errors="replace")
-        # Remove RTF header and control words
-        text = _re.sub(r'\\\\[a-z]+\d*\s?', '', text)  # control words
-        text = _re.sub(r'\{[^{}]*\}', '', text)          # groups
-        text = _re.sub(r'\\[{}]', '', text)               # escaped braces
-        text = _re.sub(r'\\[a-z]+\d*\s?', ' ', text)     # remaining control words
-        text = _re.sub(r'\{|\}', '', text)                # leftover braces
-        text = _re.sub(r'[ \t]+', ' ', text)              # collapse spaces
+        text = _re.sub(r'\\\\[a-z]+\d*\s?', '', text)
+        text = _re.sub(r'\{[^{}]*\}', '', text)
+        text = _re.sub(r'\\[{}]', '', text)
+        text = _re.sub(r'\\[a-z]+\d*\s?', ' ', text)
+        text = _re.sub(r'\{|\}', '', text)
+        text = _re.sub(r'[ \t]+', ' ', text)
         text = '\n'.join(line.strip() for line in text.splitlines() if line.strip())
         return text.strip()
 
-    parts = []
+    # Walk notes from most-recently-modified to oldest
+    # Return the first note that has both a date and at least one time range
+    fallback_text = None
     for pkg in rtfd_packages:
         rtf_file = pkg / "TXT.rtf"
-        if rtf_file.exists():
-            try:
-                plain = strip_rtf(rtf_file.read_bytes())
-                if plain:
-                    parts.append(plain)
-            except Exception as e:
-                print(f"Warning: could not read {rtf_file}: {e}", file=sys.stderr)
+        if not rtf_file.exists():
+            continue
+        try:
+            plain = strip_rtf(rtf_file.read_bytes())
+        except Exception as e:
+            print(f"Warning: could not read {rtf_file}: {e}", file=sys.stderr)
+            continue
+        if not plain:
+            continue
+        has_date = bool(_date_re.search(plain))
+        has_time_range = bool(_time_range_re.search(plain))
+        if has_date and has_time_range:
+            print(f"📌 Using Stickies note: {pkg.name} (most recent with date + time range)", file=sys.stderr)
+            return plain
+        # Keep the most-recent note as fallback in case none qualify
+        if fallback_text is None:
+            fallback_text = plain
 
-    if not parts:
-        print("No readable text found in Stickies notes.", file=sys.stderr)
-        sys.exit(0)
+    # No note had both a date and time range — use the most recently modified note
+    if fallback_text:
+        print("⚠️  No Stickies note found with both a date and time range — using most recently modified note.", file=sys.stderr)
+        return fallback_text
 
-    return "\n---\n".join(parts)
+    print("No readable text found in Stickies notes.", file=sys.stderr)
+    sys.exit(0)
 
 # ── Date extraction ──────────────────────────────────────────────────────────────
 
