@@ -213,7 +213,8 @@ DURATION_RE = re.compile(
 )
 
 # Jira key: 1+ letters, dash, digits (case-insensitive)
-JIRA_KEY_RE = re.compile(r'\b([A-Za-z][A-Za-z0-9]+-\d+)\b')
+# Must NOT be preceded by '(' to avoid matching parenthetical notes like (parent-742)
+JIRA_KEY_RE = re.compile(r'(?<!\()\b([A-Za-z][A-Za-z0-9]+-\d+)\b')
 
 def parse_time_range(line):
     """Return duration in minutes from a HH:MM-->HH:MM range, or None."""
@@ -353,11 +354,13 @@ def split_into_blocks(text):
 def parse_entries(text, charge_codes):
     """
     Parse time entries from note text using a block-based approach.
-    Each block starts with a Jira key line, followed by description lines
-    and one or more time range lines (e.g. 10:00-->11:30).
+    Each block produces ONE worklog entry — blocks with the same Jira key
+    but different descriptions are kept as separate entries.
     Returns list of dicts: {key, minutes, comment, is_standup}
     """
-    merged = {}   # key -> {minutes, comments, is_standup}
+    entries = []        # final list — one entry per block
+    standup_entry = None
+    time_by_key = {}    # used only to pick the right standup code at the end
 
     blocks = split_into_blocks(text)
 
@@ -370,13 +373,10 @@ def parse_entries(text, charge_codes):
         if any(is_skip_line(l) for l in block_lines):
             continue
 
-        # Collect all Jira keys from the block (first line takes priority)
-        keys = []
-        for line in block_lines:
-            found = extract_jira_keys(line)
-            if found:
-                keys.extend(found)
-        keys = list(dict.fromkeys(keys))  # deduplicate, preserve order
+        # Collect Jira keys — ONLY from the first line of the block
+        # (subsequent lines may reference related tickets but are not the primary key)
+        first_line_keys = extract_jira_keys(block_lines[0])
+        keys = list(dict.fromkeys(first_line_keys))  # deduplicate, preserve order
 
         # Detect standup block
         is_standup = any(is_standup_line(l) for l in block_lines)
@@ -396,20 +396,22 @@ def parse_entries(text, charge_codes):
                     total_minutes += dur
                     break  # only use first explicit duration if no time range
 
-        # Standup: always 30m regardless of time range
+        # Standup: always 30m, deduplicated to one entry
         if is_standup:
-            merged["__standup__"] = {
-                "minutes": 30,
-                "comments": ["Hyperion Standup"],
-                "is_standup": True
-            }
+            if standup_entry is None:
+                standup_entry = {
+                    "key": "__standup__",
+                    "minutes": 30,
+                    "comment": "Hyperion Standup",
+                    "is_standup": True,
+                }
             continue
 
         # Skip blocks with no time
         if total_minutes <= 0:
             continue
 
-        # If no explicit keys, try to resolve from block content
+        # If no explicit keys on first line, try to resolve from full block content
         if not keys:
             for line in block_lines:
                 resolved_key, resolved_label = resolve_charge_code(line, charge_codes, [])
@@ -427,35 +429,26 @@ def parse_entries(text, charge_codes):
             if is_skip_line(line):
                 continue
             # Strip leading Jira keys from the line for cleaner comments
-            cleaned = JIRA_KEY_RE.sub('', line).strip(' /-–—:')
+            cleaned = JIRA_KEY_RE.sub('', line).strip(' /-\u2013\u2014:')
             if cleaned and len(cleaned) > 2:
                 comment_lines.append(cleaned)
         comment = '; '.join(comment_lines[:3]) if comment_lines else keys[0]
 
-        for key in keys:
-            key = key.upper()
-            if key not in merged:
-                merged[key] = {"minutes": 0, "comments": [], "is_standup": False}
-            merged[key]["minutes"] += total_minutes
-            if comment and comment not in merged[key]["comments"]:
-                merged[key]["comments"].append(comment)
-
-    # Resolve standup placeholder
-    if "__standup__" in merged:
-        standup_key, standup_label = determine_standup_key(charge_codes, {
-            k: v["minutes"] for k, v in merged.items() if k != "__standup__"
-        })
-        merged[standup_key] = merged.pop("__standup__")
-        merged[standup_key]["comments"] = ["Hyperion Standup"]
-
-    entries = []
-    for key, data in merged.items():
+        # One entry per block — even if the same key appears in multiple blocks
+        primary_key = keys[0].upper()
         entries.append({
-            "key": key,
-            "minutes": data["minutes"],
-            "comment": "; ".join(data["comments"]) if data["comments"] else key,
-            "is_standup": data.get("is_standup", False),
+            "key": primary_key,
+            "minutes": total_minutes,
+            "comment": comment,
+            "is_standup": False,
         })
+        time_by_key[primary_key] = time_by_key.get(primary_key, 0) + total_minutes
+
+    # Resolve standup placeholder — pick best standup code based on time distribution
+    if standup_entry is not None:
+        standup_key, standup_label = determine_standup_key(charge_codes, time_by_key)
+        standup_entry["key"] = standup_key
+        entries.insert(0, standup_entry)  # standup first
 
     return entries
 
