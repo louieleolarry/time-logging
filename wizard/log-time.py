@@ -57,14 +57,14 @@ def read_mac_notes(script_dir):
     return data.get("body", "")
 
 def read_stickies(script_dir):
-    """Read all open Stickies windows via AppleScript and return their combined text."""
+    """Read all Stickies notes via AppleScript and return their combined text."""
     applescript = '''
 tell application "Stickies"
     set output to ""
-    set winList to every window
-    repeat with w in winList
+    set noteList to every note
+    repeat with n in noteList
         try
-            set noteText to text of w
+            set noteText to text of n
             set output to output & noteText & "\n---\n"
         end try
     end repeat
