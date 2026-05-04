@@ -1,0 +1,14 @@
+{
+  "name": "jira-time-tracker-wizard",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js",
+    "build": "cd client && pnpm build",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5"
+  }
+}
