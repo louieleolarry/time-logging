@@ -4,8 +4,8 @@
     "email": "your.email@codazen.com",
     "token": "YOUR_JIRA_API_TOKEN"
   },
-  "sources": ["google-sheets"],
-  "google_source_url": "YOUR_SPREADSHEET_ID_OR_FULL_URL",
+  "approach": "cron",
+  "sources": ["mac-notes"],
   "charge_codes": {
     "rapid_response": [
       {"label": "AI",           "key": "FBAI-875"},
@@ -27,6 +27,7 @@
       {"label": "MDC",          "key": "MDCR-13"}
     ]
   },
+  "custom_rules": [],
   "schedule": {
     "time": "17:30",
     "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]

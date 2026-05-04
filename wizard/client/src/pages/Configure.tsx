@@ -36,7 +36,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           jira: state.jira,
-          approach: state.approach,
+          approach: 'cron',
           sources: state.sources,
           charge_codes: state.chargeCodes,
           custom_rules: state.customRules,
@@ -47,8 +47,8 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
       const configData = await configRes.json();
       if (!configData.ok) throw new Error(configData.error);
 
-      // 2. If cron approach, set up launchd
-      if (state.approach === 'claude-cron') {
+      // 2. Set up launchd (always cron)
+      {
         const launchdRes = await fetch('/api/launchd', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -85,7 +85,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
             <span className="text-xs font-semibold" style={{ color: '#8b949e' }}>Configuration Summary</span>
           </div>
           {[
-            { label: 'Approach', value: 'Claude Code CLI + Cron' },
+            { label: 'Approach', value: 'Cron (launchd)' },
             { label: 'Sources', value: state.sources.join(', ') || '—' },
             { label: 'Jira URL', value: state.jira.url || '—' },
             { label: 'Email', value: state.jira.email || '—' },

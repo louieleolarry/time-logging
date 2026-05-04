@@ -14,7 +14,7 @@ server/
   index.js        ← Express server: serves UI + exposes /api/* endpoints
   routes/
     check.js      ← GET /api/check — probe installed tools, existing config
-    install.js    ← POST /api/install — run shell commands (uv, pip3, etc.)
+    install.js    ← POST /api/install — run shell commands (pip3, etc.)
     config.js     ← POST /api/config — write ~/.jira-time-tracker/config.json
     launchd.js    ← POST /api/launchd — write + load launchd plist
     verify.js     ← POST /api/verify — test Jira connection, dry-run log
@@ -25,7 +25,6 @@ client/           ← React + Tailwind (same stack as existing wizard)
     App.tsx
     pages/
       Welcome.tsx
-      ChooseApproach.tsx
       ChooseSource.tsx
       JiraCredentials.tsx
       ChargeCodes.tsx
@@ -39,15 +38,17 @@ client/           ← React + Tailwind (same stack as existing wizard)
 
 | # | Step | What happens |
 |---|---|---|
-| 1 | **Welcome** | Intro screen, same style as existing wizard |
-| 2 | **Choose Approach** | Manus-native (paste into chat) vs Claude Code CLI + cron — same two-card UI as existing wizard |
-| 3 | **Choose Source** | Sticky Notes / Mac Notes / Google Sheets / Google Docs — multi-select cards |
-| 4 | **Jira Credentials** | Atlassian URL, email, API token — written to config |
-| 5 | **Charge Codes** | Paste RR, Standup, Code Review codes — parsed and stored in config |
-| 6 | **Install Dependencies** | Live terminal output: installs mcp-atlassian, macnotesapp, google libs as needed |
-| 7 | **Configure** | Writes ~/.jira-time-tracker/config.json; if Claude Code CLI chosen: writes launchd plist + schedule picker |
-| 8 | **Test & Verify** | Pings Jira API, shows connected account, optional dry-run |
-| 9 | **Done** | Summary, copy-paste command for manual runs, link to docs |
+| 1 | **Welcome** | Intro screen |
+| 2 | **Choose Source** | Sticky Notes / Mac Notes / Google Sheets / Google Docs — multi-select cards |
+| 3 | **Jira Credentials** | Atlassian URL, email, API token — written to config |
+| 4 | **Charge Codes** | Paste RR, Standup, Code Review codes — parsed and stored in config |
+| 5 | **Install Dependencies** | Live terminal output: installs requests, macnotesapp, google libs as needed |
+| 6 | **Configure** | Writes ~/.jira-time-tracker/config.json; writes launchd plist + schedule picker |
+| 7 | **Test & Verify** | Pings Jira API, shows connected account, optional dry-run |
+| 8 | **Done** | Summary, copy-paste command for manual runs, link to docs |
+
+All logging is done via a **launchd cron job** that calls `log-time.py` directly.
+`log-time.py` posts worklogs to Jira using the REST API — no Claude Code CLI or MCP server required.
 
 ## Config Schema (config.json)
 
@@ -58,8 +59,8 @@ client/           ← React + Tailwind (same stack as existing wizard)
     "email": "you@company.com",
     "token": "ATATT3..."
   },
-  "approach": "claude-cron" | "manus-native",
-  "sources": ["stickies", "mac-notes", "google-sheets", "google-docs"],
+  "approach": "cron",
+  "sources": ["mac-notes"],
   "charge_codes": {
     "rapid_response": [
       { "label": "AI", "key": "FBAI-875" },
@@ -74,6 +75,7 @@ client/           ← React + Tailwind (same stack as existing wizard)
       { "label": "FCEH", "key": "FCEH-751" }
     ]
   },
+  "custom_rules": [],
   "schedule": {
     "time": "17:30",
     "days": ["Mon","Tue","Wed","Thu","Fri"]
@@ -81,7 +83,7 @@ client/           ← React + Tailwind (same stack as existing wizard)
 }
 ```
 
-## Charge Code Input Format (Step 5)
+## Charge Code Input Format (Step 4)
 
 Users paste freeform text like:
 ```
@@ -103,7 +105,7 @@ Parser rules:
 - `label: KEY` format → { label, key }
 - `KEY / KEY` format → multiple entries, label inferred from key prefix
 
-## Design Language (matching existing wizard)
+## Design Language
 
 - **Background:** `#0d1117` (near-black)
 - **Card surface:** `#161b22`
@@ -113,7 +115,7 @@ Parser rules:
 - **Text primary:** `#e6edf3`
 - **Text muted:** `#8b949e`
 - **Font:** JetBrains Mono for code blocks, system-ui for body
-- **Progress:** Left sidebar vertical stepper (same as existing wizard)
+- **Progress:** Left sidebar vertical stepper
 - **Cards:** Dark bordered cards with hover glow for selection steps
 
 ## Distribution

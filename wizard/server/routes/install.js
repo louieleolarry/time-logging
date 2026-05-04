@@ -9,7 +9,6 @@ const router = Router();
 // Streams install progress via Server-Sent Events
 router.post('/', (req, res) => {
   const { sources = [] } = req.body;
-  const approach = 'claude-cron';
 
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -21,17 +20,16 @@ router.post('/', (req, res) => {
     res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
   };
 
-  const uvBin = `${os.homedir()}/.local/bin/uv`;
   const pip3 = '/usr/bin/pip3';
 
   // Build install steps based on selections
   const steps = [];
 
-  // mcp-atlassian is always needed
+  // requests is always needed for the Jira REST API calls
   steps.push({
-    label: 'Installing mcp-atlassian...',
-    cmd: uvBin,
-    args: ['tool', 'install', 'mcp-atlassian'],
+    label: 'Installing requests (Jira REST API client)...',
+    cmd: pip3,
+    args: ['install', 'requests'],
   });
 
   if (sources.includes('mac-notes')) {
@@ -49,13 +47,6 @@ router.post('/', (req, res) => {
       args: ['install', 'google-api-python-client', 'google-auth-httplib2', 'google-auth-oauthlib'],
     });
   }
-
-  // Always check for Claude Code CLI
-  steps.push({
-    label: 'Checking for Claude Code CLI...',
-    cmd: 'which',
-    args: ['claude'],
-  });
 
   let stepIndex = 0;
 
@@ -77,7 +68,7 @@ router.post('/', (req, res) => {
     proc.stderr.on('data', (d) => send('stderr', { text: d.toString() }));
 
     proc.on('close', (code) => {
-      if (code !== 0 && step.cmd !== 'which') {
+      if (code !== 0) {
         send('error', { label: step.label, code });
         // Continue anyway — user can retry
       } else {

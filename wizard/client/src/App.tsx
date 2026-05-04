@@ -10,7 +10,6 @@ import Configure from './pages/Configure';
 import TestVerify from './pages/TestVerify';
 import Done from './pages/Done';
 
-export type Approach = 'claude-cron';
 export type Source = 'stickies' | 'mac-notes' | 'google-sheets' | 'google-docs';
 
 export interface CustomRule {
@@ -20,7 +19,6 @@ export interface CustomRule {
 }
 
 export interface WizardState {
-  approach: Approach;
   sources: Source[];
   jira: { url: string; email: string; token: string };
   chargeCodes: {
@@ -47,7 +45,6 @@ export const STEPS = [
 ];
 
 const defaultState: WizardState = {
-  approach: 'claude-cron',
   sources: [],
   jira: { url: '', email: '', token: '' },
   chargeCodes: { rapid_response: [], standup: [], code_review: [] },
@@ -61,6 +58,7 @@ const defaultState: WizardState = {
 function hydrateState(config: Record<string, unknown>): WizardState {
   const s = { ...defaultState };
 
+  // approach field is ignored — always cron
   if (Array.isArray(config.sources)) s.sources = config.sources as Source[];
 
   if (config.jira && typeof config.jira === 'object') {

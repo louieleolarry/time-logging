@@ -77,7 +77,7 @@ export default function Done({ state }: Props) {
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-3 mb-8">
         {[
-          { icon: '⚙', label: 'Approach', value: 'Claude Code CLI + Cron' },
+          { icon: '⚙', label: 'Approach', value: 'Cron (launchd)' },
           { icon: '📂', label: 'Sources', value: state.sources.length > 0 ? state.sources.join(', ') : '—' },
           { icon: '👤', label: 'Jira Account', value: state.verifiedAccount?.displayName || state.jira.email || '—' },
         ].map((card) => (

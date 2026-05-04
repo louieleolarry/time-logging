@@ -36,7 +36,7 @@ export default function InstallDeps({ state, onNext, onBack }: Props) {
       const res = await fetch('/api/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sources: state.sources, approach: state.approach }),
+        body: JSON.stringify({ sources: state.sources }),
       });
 
       const reader = res.body!.getReader();
@@ -99,8 +99,8 @@ export default function InstallDeps({ state, onNext, onBack }: Props) {
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="badge badge-blue">always</span>
-            <code className="text-xs" style={{ color: '#79c0ff' }}>mcp-atlassian</code>
-            <span className="text-xs" style={{ color: '#484f58' }}>— Jira/Confluence MCP server</span>
+            <code className="text-xs" style={{ color: '#79c0ff' }}>requests</code>
+            <span className="text-xs" style={{ color: '#484f58' }}>— HTTP client for Jira REST API</span>
           </div>
           {state.sources.includes('mac-notes') && (
             <div className="flex items-center gap-2">
