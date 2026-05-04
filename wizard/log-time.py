@@ -217,15 +217,33 @@ DURATION_RE = re.compile(
 JIRA_KEY_RE = re.compile(r'(?<!\()\b([A-Za-z][A-Za-z0-9]+-\d+)\b')
 
 def parse_time_range(line):
-    """Return duration in minutes from a HH:MM-->HH:MM range, or None."""
+    """Return duration in minutes from a HH:MM-->HH:MM range, or None.
+    
+    Overnight wrap is only applied when the end hour is genuinely before the
+    start hour AND the start hour is >= 20 (8pm+), which is the only realistic
+    overnight work scenario. A range like 12:30-->1:00 is treated as 30 minutes
+    (i.e. the end time is interpreted as 1:00pm context, not 1:00am).
+    In practice: if end < start and start < 20, treat end as end+12 (pm) first;
+    if still < start, then it's truly overnight.
+    """
     m = TIME_RANGE_RE.search(line)
     if not m:
         return None
     h1, m1, h2, m2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
     start = h1 * 60 + m1
     end = h2 * 60 + m2
+    if end < start:
+        # Try interpreting end as PM (add 12h) if it looks like a same-day range
+        # e.g. 12:30-->1:00 should be 30 min (1:00pm), not 12.5h
+        if h2 < 12 and h2 + 12 > h1:
+            end += 12 * 60  # interpret as PM
+        elif start >= 20 * 60:  # genuine overnight (start is 8pm+)
+            end += 24 * 60
+        else:
+            # Ambiguous — treat as same-day, add 12h to end
+            end += 12 * 60
     if end <= start:
-        end += 24 * 60  # overnight
+        return None  # still invalid after adjustment
     return end - start
 
 def parse_duration(text):
@@ -315,13 +333,17 @@ def determine_standup_key(charge_codes, time_by_key):
 
 def split_into_blocks(text):
     """
-    Split note text into blocks. A new block starts when a Jira key appears
-    at the beginning of a line (possibly after whitespace). The header section
-    (everything before the first '---' separator) is discarded.
+    Split note text into blocks separated by blank lines.
+    The header section (everything before the first '---' separator) is discarded.
+    
+    Blocks are ONLY separated by blank lines — a block can contain any text
+    including lines that start with Jira keys. This ensures that a 'lunch' block
+    or any other non-Jira block that immediately follows a Jira block (with a
+    blank line between them) is treated as a separate block.
+    
     Returns a list of block strings.
     """
     # Strip header: everything up to and including the first '---' separator line
-    # A separator is a line of 3+ dashes/hyphens/em-dashes
     sep_re = re.compile(r'^[-–—]{3,}\s*$')
     lines_all = text.split('\n')
     start_idx = 0
@@ -336,15 +358,11 @@ def split_into_blocks(text):
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            # Blank line = block separator if current block is non-empty
+            # Blank line = block separator
             if current_block:
                 blocks.append('\n'.join(current_block))
                 current_block = []
             continue
-        # A line that starts with a Jira key signals a new block
-        if JIRA_KEY_RE.match(stripped) and current_block:
-            blocks.append('\n'.join(current_block))
-            current_block = []
         current_block.append(stripped)
     if current_block:
         blocks.append('\n'.join(current_block))
@@ -399,10 +417,13 @@ def parse_entries(text, charge_codes):
         # Standup: always 30m, deduplicated to one entry
         if is_standup:
             if standup_entry is None:
+                # Use explicit key from block first line if present, else defer to heuristic
+                standup_key = keys[0] if keys else "__standup__"
+                standup_comment = "Hyperion Standup"
                 standup_entry = {
-                    "key": "__standup__",
-                    "minutes": 30,
-                    "comment": "Hyperion Standup",
+                    "key": standup_key,
+                    "minutes": total_minutes if total_minutes > 0 else 30,
+                    "comment": standup_comment,
                     "is_standup": True,
                 }
             continue
@@ -444,10 +465,11 @@ def parse_entries(text, charge_codes):
         })
         time_by_key[primary_key] = time_by_key.get(primary_key, 0) + total_minutes
 
-    # Resolve standup placeholder — pick best standup code based on time distribution
+    # Resolve standup placeholder — use explicit key if found, else pick by time distribution
     if standup_entry is not None:
-        standup_key, standup_label = determine_standup_key(charge_codes, time_by_key)
-        standup_entry["key"] = standup_key
+        if standup_entry["key"] == "__standup__":
+            standup_key, standup_label = determine_standup_key(charge_codes, time_by_key)
+            standup_entry["key"] = standup_key
         entries.insert(0, standup_entry)  # standup first
 
     return entries
