@@ -57,34 +57,57 @@ def read_mac_notes(script_dir):
     return data.get("body", "")
 
 def read_stickies(script_dir):
-    """Read all Stickies notes via AppleScript and return their combined text."""
-    applescript = '''
-tell application "Stickies"
-    set output to ""
-    set noteList to every note
-    repeat with n in noteList
-        try
-            set noteText to text of n
-            set output to output & noteText & "\n---\n"
-        end try
-    end repeat
-    return output
-end tell
-'''
-    result = subprocess.run(
-        ["osascript", "-e", applescript],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        err = result.stderr.strip()
-        print(f"ERROR reading Stickies: {err}", file=sys.stderr)
-        print("Make sure Stickies.app is running and Accessibility/Automation permissions are granted.", file=sys.stderr)
+    """Read Stickies notes from the macOS Stickies container directory.
+    On macOS Catalina+, each note is stored as an .rtfd package containing TXT.rtf.
+    We strip RTF markup and return the plain text of all notes joined by '---'.
+    """
+    import re as _re
+    stickies_dir = Path.home() / "Library/Containers/com.apple.stickies/Data/Library/Stickies"
+    if not stickies_dir.exists():
+        # Fallback: older macOS path (pre-Catalina)
+        stickies_dir = Path.home() / "Library/Containers/Stickies/Data/Library/Stickies"
+    if not stickies_dir.exists():
+        print(f"ERROR: Stickies directory not found at {stickies_dir}", file=sys.stderr)
+        print("Make sure Stickies.app has been opened at least once.", file=sys.stderr)
         sys.exit(1)
-    raw = result.stdout.strip()
-    if not raw:
-        print("No Stickies windows found — make sure Stickies.app is open with at least one note.", file=sys.stderr)
+
+    rtfd_packages = sorted(stickies_dir.glob("*.rtfd"))
+    if not rtfd_packages:
+        print("No Stickies notes found — make sure you have at least one note created.", file=sys.stderr)
         sys.exit(0)
-    return raw
+
+    def strip_rtf(rtf_bytes):
+        """Extract plain text from RTF content."""
+        try:
+            text = rtf_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            text = rtf_bytes.decode("latin-1", errors="replace")
+        # Remove RTF header and control words
+        text = _re.sub(r'\\\\[a-z]+\d*\s?', '', text)  # control words
+        text = _re.sub(r'\{[^{}]*\}', '', text)          # groups
+        text = _re.sub(r'\\[{}]', '', text)               # escaped braces
+        text = _re.sub(r'\\[a-z]+\d*\s?', ' ', text)     # remaining control words
+        text = _re.sub(r'\{|\}', '', text)                # leftover braces
+        text = _re.sub(r'[ \t]+', ' ', text)              # collapse spaces
+        text = '\n'.join(line.strip() for line in text.splitlines() if line.strip())
+        return text.strip()
+
+    parts = []
+    for pkg in rtfd_packages:
+        rtf_file = pkg / "TXT.rtf"
+        if rtf_file.exists():
+            try:
+                plain = strip_rtf(rtf_file.read_bytes())
+                if plain:
+                    parts.append(plain)
+            except Exception as e:
+                print(f"Warning: could not read {rtf_file}: {e}", file=sys.stderr)
+
+    if not parts:
+        print("No readable text found in Stickies notes.", file=sys.stderr)
+        sys.exit(0)
+
+    return "\n---\n".join(parts)
 
 # ── Date extraction ──────────────────────────────────────────────────────────────
 
