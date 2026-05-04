@@ -40,7 +40,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
           sources: state.sources,
           charge_codes: state.chargeCodes,
           custom_rules: state.customRules,
-          google_source_url: state.googleSourceUrl || undefined,
+          google_source_url: state.sources.some(s => s.startsWith('google')) ? (state.googleSourceUrl || undefined) : undefined,
           schedule: state.schedule,
         }),
       });
@@ -94,7 +94,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
             { label: 'Standup Codes', value: state.chargeCodes.standup.map((c) => c.key).join(', ') || '—' },
             { label: 'Code Review Codes', value: state.chargeCodes.code_review.map((c) => c.key).join(', ') || '—' },
             { label: 'Custom Rules', value: state.customRules.length > 0 ? `${state.customRules.length} rule${state.customRules.length !== 1 ? 's' : ''}` : 'None (defaults apply)' },
-            ...(state.googleSourceUrl ? [{ label: 'Google Source', value: state.googleSourceUrl }] : []),
+            ...(state.googleSourceUrl && state.sources.some(s => s.startsWith('google')) ? [{ label: 'Google Source', value: state.googleSourceUrl }] : []),
           ].map((row, i) => (
             <div key={row.label} className="flex px-4 py-2.5" style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)', borderTop: '1px solid #30363d' }}>
               <span className="text-xs w-40 flex-shrink-0" style={{ color: '#8b949e' }}>{row.label}</span>

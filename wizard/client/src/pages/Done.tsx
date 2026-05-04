@@ -28,7 +28,7 @@ function CopyBlock({ code }: { code: string }) {
 
 export default function Done({ state }: Props) {
   const pythonBin = '/usr/bin/python3';
-  const wizardDir = '~/JiraTimeTracker';
+  const wizardDir = '~/Applications/JiraTimeTracker/wizard';
   const gdrivScript = '~/skills/jira-time-tracker/scripts/log_from_gdrive.py';
 
   const isGoogleSheets = state.sources.includes('google-sheets');

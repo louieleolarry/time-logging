@@ -57,9 +57,34 @@ def read_mac_notes(script_dir):
     return data.get("body", "")
 
 def read_stickies(script_dir):
-    """Placeholder — stickies are image-based and require OCR via Manus."""
-    print("ERROR: Sticky Notes source requires Manus for OCR. Use Mac Notes, Google Docs, or Google Sheets for automated logging.", file=sys.stderr)
-    sys.exit(1)
+    """Read all open Stickies windows via AppleScript and return their combined text."""
+    applescript = '''
+tell application "Stickies"
+    set output to ""
+    set winList to every window
+    repeat with w in winList
+        try
+            set noteText to text of w
+            set output to output & noteText & "\n---\n"
+        end try
+    end repeat
+    return output
+end tell
+'''
+    result = subprocess.run(
+        ["osascript", "-e", applescript],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        err = result.stderr.strip()
+        print(f"ERROR reading Stickies: {err}", file=sys.stderr)
+        print("Make sure Stickies.app is running and Accessibility/Automation permissions are granted.", file=sys.stderr)
+        sys.exit(1)
+    raw = result.stdout.strip()
+    if not raw:
+        print("No Stickies windows found — make sure Stickies.app is open with at least one note.", file=sys.stderr)
+        sys.exit(0)
+    return raw
 
 # ── Date extraction ──────────────────────────────────────────────────────────────
 
@@ -374,7 +399,7 @@ def main():
     if source == "mac-notes":
         text = read_mac_notes(script_dir)
     elif source == "stickies":
-        read_stickies(script_dir)
+        text = read_stickies(script_dir)
     else:
         print(f"ERROR: Source '{source}' not yet supported for automated logging.", file=sys.stderr)
         sys.exit(1)
