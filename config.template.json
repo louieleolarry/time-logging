@@ -1,0 +1,34 @@
+{
+  "jira": {
+    "url": "https://codazen.atlassian.net",
+    "email": "your.email@codazen.com",
+    "token": "YOUR_JIRA_API_TOKEN"
+  },
+  "sources": ["google-sheets"],
+  "google_source_url": "YOUR_SPREADSHEET_ID_OR_FULL_URL",
+  "charge_codes": {
+    "rapid_response": [
+      {"label": "AI",           "key": "FBAI-875"},
+      {"label": "AFG",          "key": "MAFG-40"},
+      {"label": "FCEH",         "key": "FCEH-109"},
+      {"label": "Safety Center","key": "FCEH-667"},
+      {"label": "MDC",          "key": "MDCR-4"}
+    ],
+    "standup": [
+      {"label": "AI",           "key": "FBAI-1683"},
+      {"label": "AI for Good",  "key": "MAFG-4"},
+      {"label": "FCEH",         "key": "FCEH-750"},
+      {"label": "MDC",          "key": "MDCR-12"}
+    ],
+    "code_review": [
+      {"label": "AI",           "key": "FBAI-1667"},
+      {"label": "AFG",          "key": "MAFG-3"},
+      {"label": "FCEH",         "key": "FCEH-751"},
+      {"label": "MDC",          "key": "MDCR-13"}
+    ]
+  },
+  "schedule": {
+    "time": "17:30",
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]
+  }
+}
