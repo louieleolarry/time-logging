@@ -286,27 +286,92 @@ def determine_standup_key(charge_codes, time_by_key):
     # Default to first standup code
     return standup_codes[0]["key"], standup_codes[0].get("label", "Standup")
 
+def split_into_blocks(text):
+    """
+    Split note text into blocks. A new block starts when a Jira key appears
+    at the beginning of a line (possibly after whitespace). The header section
+    (everything before the first '---' separator) is discarded.
+    Returns a list of block strings.
+    """
+    # Strip header: everything up to and including the first '---' separator line
+    # A separator is a line of 3+ dashes/hyphens/em-dashes
+    sep_re = re.compile(r'^[-–—]{3,}\s*$')
+    lines_all = text.split('\n')
+    start_idx = 0
+    for i, line in enumerate(lines_all):
+        if sep_re.match(line.strip()):
+            start_idx = i + 1
+            break
+    lines = lines_all[start_idx:]
+
+    blocks = []
+    current_block = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            # Blank line = block separator if current block is non-empty
+            if current_block:
+                blocks.append('\n'.join(current_block))
+                current_block = []
+            continue
+        # A line that starts with a Jira key signals a new block
+        if JIRA_KEY_RE.match(stripped) and current_block:
+            blocks.append('\n'.join(current_block))
+            current_block = []
+        current_block.append(stripped)
+    if current_block:
+        blocks.append('\n'.join(current_block))
+    return blocks
+
+
 def parse_entries(text, charge_codes):
     """
-    Parse time entries from note text.
+    Parse time entries from note text using a block-based approach.
+    Each block starts with a Jira key line, followed by description lines
+    and one or more time range lines (e.g. 10:00-->11:30).
     Returns list of dicts: {key, minutes, comment, is_standup}
     """
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    entries = []  # {key, minutes, comment, is_standup}
     merged = {}   # key -> {minutes, comments, is_standup}
 
-    for line in lines:
-        if is_skip_line(line):
+    blocks = split_into_blocks(text)
+
+    for block in blocks:
+        block_lines = [l.strip() for l in block.split('\n') if l.strip()]
+        if not block_lines:
             continue
 
-        duration = parse_time_range(line)
-        if duration is None:
-            duration = parse_duration(line)
-        if duration is None or duration <= 0:
+        # Skip blocks marked with ???
+        if any(is_skip_line(l) for l in block_lines):
             continue
 
-        # Standup detection — always 30m, one per day
-        if is_standup_line(line):
+        # Collect all Jira keys from the block (first line takes priority)
+        keys = []
+        for line in block_lines:
+            found = extract_jira_keys(line)
+            if found:
+                keys.extend(found)
+        keys = list(dict.fromkeys(keys))  # deduplicate, preserve order
+
+        # Detect standup block
+        is_standup = any(is_standup_line(l) for l in block_lines)
+
+        # Sum all time ranges in the block
+        total_minutes = 0
+        for line in block_lines:
+            dur = parse_time_range(line)
+            if dur and dur > 0:
+                total_minutes += dur
+
+        # If no time range found, try duration strings
+        if total_minutes == 0:
+            for line in block_lines:
+                dur = parse_duration(line)
+                if dur and dur > 0:
+                    total_minutes += dur
+                    break  # only use first explicit duration if no time range
+
+        # Standup: always 30m regardless of time range
+        if is_standup:
             merged["__standup__"] = {
                 "minutes": 30,
                 "comments": ["Hyperion Standup"],
@@ -314,32 +379,38 @@ def parse_entries(text, charge_codes):
             }
             continue
 
-        keys = extract_jira_keys(line)
+        # Skip blocks with no time
+        if total_minutes <= 0:
+            continue
 
+        # If no explicit keys, try to resolve from block content
         if not keys:
-            # Try to resolve from context
-            resolved_key, resolved_label = resolve_charge_code(line, charge_codes, [])
-            if resolved_key:
-                keys = [resolved_key]
-                comment = resolved_label
-            else:
-                # No key and can't resolve — skip
+            for line in block_lines:
+                resolved_key, resolved_label = resolve_charge_code(line, charge_codes, [])
+                if resolved_key:
+                    keys = [resolved_key]
+                    break
+        if not keys:
+            continue  # can't identify issue — skip
+
+        # Build comment from description lines (non-key, non-time-range lines)
+        comment_lines = []
+        for line in block_lines:
+            if TIME_RANGE_RE.search(line):
+                continue  # skip time range lines
+            if is_skip_line(line):
                 continue
-        
-        # Extract comment: everything after the last Jira key on the line
-        comment = line
-        if keys:
-            last_key_match = list(JIRA_KEY_RE.finditer(line))
-            if last_key_match:
-                comment = line[last_key_match[-1].end():].strip(" -–—:").strip()
-        if not comment:
-            comment = keys[0] if keys else ""
+            # Strip leading Jira keys from the line for cleaner comments
+            cleaned = JIRA_KEY_RE.sub('', line).strip(' /-–—:')
+            if cleaned and len(cleaned) > 2:
+                comment_lines.append(cleaned)
+        comment = '; '.join(comment_lines[:3]) if comment_lines else keys[0]
 
         for key in keys:
             key = key.upper()
             if key not in merged:
                 merged[key] = {"minutes": 0, "comments": [], "is_standup": False}
-            merged[key]["minutes"] += duration
+            merged[key]["minutes"] += total_minutes
             if comment and comment not in merged[key]["comments"]:
                 merged[key]["comments"].append(comment)
 
@@ -351,6 +422,7 @@ def parse_entries(text, charge_codes):
         merged[standup_key] = merged.pop("__standup__")
         merged[standup_key]["comments"] = ["Hyperion Standup"]
 
+    entries = []
     for key, data in merged.items():
         entries.append({
             "key": key,
@@ -362,6 +434,27 @@ def parse_entries(text, charge_codes):
     return entries
 
 # ── Jira API ──────────────────────────────────────────────────────────────────
+
+def get_existing_worklogs(jira_url, email, token, issue_key, log_date):
+    """Return set of (timeSpentSeconds, started_date) tuples already logged for this issue on this date."""
+    url = jira_url.rstrip("/") + f"/rest/api/3/issue/{issue_key}/worklog"
+    auth = b64encode(f"{email}:{token}".encode()).decode()
+    headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return set()
+        data = resp.json()
+        worklogs = data.get("worklogs", [])
+        existing = set()
+        for wl in worklogs:
+            started = wl.get("started", "")
+            if started.startswith(log_date):
+                existing.add(wl.get("timeSpentSeconds", 0))
+        return existing
+    except Exception:
+        return set()
+
 
 def post_worklog(jira_url, email, token, issue_key, minutes, comment, started_date):
     """Post a worklog to Jira REST API v3."""
@@ -395,8 +488,34 @@ def main():
     parser = argparse.ArgumentParser(description="Log time entries to Jira")
     parser.add_argument("--dry-run", action="store_true", help="Parse and print without posting to Jira")
     parser.add_argument("--date", default=None, help="Date to log for (YYYY-MM-DD). Defaults to today.")
-    parser.add_argument("--source", default=None, help="Override source: mac-notes, google-sheets, google-docs")
+    parser.add_argument("--source", default=None, help="Override source: mac-notes, stickies, google-sheets, google-docs")
+    parser.add_argument("--preview-file", default=None, help="Parse a text file and output JSON (used by wizard preview)")
     args = parser.parse_args()
+
+    # --preview-file mode: parse text from a file and output JSON, then exit
+    if args.preview_file:
+        try:
+            text = Path(args.preview_file).read_text()
+        except Exception as e:
+            print(json.dumps({"entries": [], "date": None, "error": str(e)}))
+            sys.exit(0)
+        config = load_config()
+        charge_codes = config.get("charge_codes", {})
+        detected_date = extract_date_from_text(text)
+        entries = parse_entries(text, charge_codes)
+        output = {
+            "date": detected_date,
+            "entries": [
+                {
+                    "key": e["key"],
+                    "time": minutes_to_jira(e["minutes"]),
+                    "comment": e["comment"],
+                }
+                for e in entries
+            ]
+        }
+        print(json.dumps(output))
+        sys.exit(0)
 
     config = load_config()
     jira = config.get("jira", {})
@@ -465,10 +584,18 @@ def main():
         print("🔍 Dry run — no entries posted to Jira.")
         return
 
-    # Post to Jira
+    # Post to Jira (with deduplication check against existing Jira worklogs)
     print("⏫ Posting to Jira...")
     success_count = 0
+    skip_count = 0
     for e in entries:
+        # Check Jira for existing worklogs on this date for this issue
+        existing_seconds = get_existing_worklogs(jira_url, email, token, e["key"], log_date)
+        entry_seconds = e["minutes"] * 60
+        if entry_seconds in existing_seconds:
+            print(f"  ⏭  {e['key']} — {minutes_to_jira(e['minutes'])} already logged on {log_date}, skipping")
+            skip_count += 1
+            continue
         resp = post_worklog(jira_url, email, token, e["key"], e["minutes"], e["comment"], log_date)
         if resp.status_code in (200, 201):
             worklog_id = resp.json().get("id", "?")
@@ -478,7 +605,7 @@ def main():
             print(f"  ✗ {e['key']} — FAILED: {resp.status_code} {resp.text[:200]}")
 
     print()
-    print(f"✅ Done — {success_count}/{len(entries)} entries logged.")
+    print(f"✅ Done — {success_count}/{len(entries)} entries logged, {skip_count} skipped (already logged).")
 
 if __name__ == "__main__":
     main()

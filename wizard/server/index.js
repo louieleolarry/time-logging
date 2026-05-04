@@ -11,6 +11,8 @@ import configRouter from './routes/config.js';
 import launchdRouter from './routes/launchd.js';
 import verifyRouter from './routes/verify.js';
 import doneRouter from './routes/done.js';
+import parsePreviewRouter from './routes/parse-preview.js';
+import sampleNoteRouter from './routes/sample-note.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -26,6 +28,8 @@ app.use('/api/config', configRouter);
 app.use('/api/launchd', launchdRouter);
 app.use('/api/verify', verifyRouter);
 app.use('/api/done', doneRouter);
+app.use('/api/parse-preview', parsePreviewRouter);
+app.use('/api/config/sample-note', sampleNoteRouter);
 
 // Serve built React UI
 const uiPath = path.resolve(__dirname, '..', 'client', 'dist');

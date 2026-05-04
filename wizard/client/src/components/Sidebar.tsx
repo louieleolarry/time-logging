@@ -1,9 +1,10 @@
 interface SidebarProps {
   steps: string[];
   current: number;
+  onNavigate?: (index: number) => void;
 }
 
-export default function Sidebar({ steps, current }: SidebarProps) {
+export default function Sidebar({ steps, current, onNavigate }: SidebarProps) {
   return (
     <div
       className="flex flex-col py-8 px-5 gap-1"
@@ -20,10 +21,27 @@ export default function Sidebar({ steps, current }: SidebarProps) {
         const isActive = i === current;
 
         return (
-          <div key={i} className="flex items-center gap-3 px-2 py-2 rounded-md" style={{
-            background: isActive ? 'rgba(37,99,235,0.1)' : 'transparent',
-          }}>
-            {/* Connector line above (except first) */}
+          <div
+            key={i}
+            onClick={() => onNavigate?.(i)}
+            className="flex items-center gap-3 px-2 py-2 rounded-md transition-colors"
+            style={{
+              background: isActive ? 'rgba(37,99,235,0.1)' : 'transparent',
+              cursor: onNavigate ? 'pointer' : 'default',
+            }}
+            title={onNavigate ? `Go to ${label}` : undefined}
+            onMouseEnter={(e) => {
+              if (onNavigate && !isActive) {
+                (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.04)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive) {
+                (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+              }
+            }}
+          >
+            {/* Step dot */}
             <div className="flex flex-col items-center" style={{ width: 10 }}>
               <div
                 className="step-dot"

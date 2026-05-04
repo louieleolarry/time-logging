@@ -8,6 +8,7 @@ import ChargeCodes from './pages/ChargeCodes';
 import InstallDeps from './pages/InstallDeps';
 import Configure from './pages/Configure';
 import TestVerify from './pages/TestVerify';
+import SampleNote from './pages/SampleNote';
 import Done from './pages/Done';
 
 export type Source = 'stickies' | 'mac-notes' | 'google-sheets' | 'google-docs';
@@ -41,8 +42,12 @@ export const STEPS = [
   'Install Dependencies',
   'Configure',
   'Test & Verify',
+  'Sample Note',
   'Done',
 ];
+
+// Index of the Done step — used to jump here when already configured
+const DONE_STEP = STEPS.length - 1;
 
 const defaultState: WizardState = {
   sources: [],
@@ -98,19 +103,29 @@ function hydrateState(config: Record<string, unknown>): WizardState {
   return s;
 }
 
+/** Returns true if the config has enough data to be considered "already configured". */
+function isAlreadyConfigured(config: Record<string, unknown>): boolean {
+  const jira = config.jira as Record<string, string> | undefined;
+  return !!(jira?.url && jira?.email && jira?.token && Array.isArray(config.sources) && (config.sources as string[]).length > 0);
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [state, setState] = useState<WizardState>(defaultState);
   const [direction, setDirection] = useState(1);
   const [hydrated, setHydrated] = useState(false);
 
-  // On mount: try to load an existing config and pre-populate all fields
+  // On mount: try to load an existing config and pre-populate all fields.
+  // If already configured, jump straight to the Done page.
   useEffect(() => {
     fetch('/api/config')
       .then((r) => r.json())
       .then((data) => {
         if (data.ok && data.config) {
           setState(hydrateState(data.config));
+          if (isAlreadyConfigured(data.config)) {
+            setStep(DONE_STEP);
+          }
         }
       })
       .catch(() => { /* no config yet — use defaults */ })
@@ -120,8 +135,12 @@ export default function App() {
   const update = (patch: Partial<WizardState>) =>
     setState((s) => ({ ...s, ...patch }));
 
-  const next = () => { setDirection(1); setStep((s) => Math.min(s + 1, STEPS.length - 1)); };
-  const back = () => { setDirection(-1); setStep((s) => Math.max(s - 1, 0)); };
+  const goTo = (i: number) => {
+    setDirection(i > step ? 1 : -1);
+    setStep(i);
+  };
+  const next = () => goTo(Math.min(step + 1, STEPS.length - 1));
+  const back = () => goTo(Math.max(step - 1, 0));
 
   const pages = [
     <Welcome key="welcome" onNext={next} />,
@@ -131,6 +150,7 @@ export default function App() {
     <InstallDeps key="install" state={state} onNext={next} onBack={back} />,
     <Configure key="configure" state={state} update={update} onNext={next} onBack={back} />,
     <TestVerify key="verify" state={state} update={update} onNext={next} onBack={back} />,
+    <SampleNote key="sample" onNext={next} onBack={back} />,
     <Done key="done" state={state} />,
   ];
 
@@ -151,7 +171,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#0d1117' }}>
-      <Sidebar steps={STEPS} current={step} />
+      <Sidebar steps={STEPS} current={step} onNavigate={goTo} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
@@ -191,7 +211,8 @@ export default function App() {
             {STEPS.map((_, i) => (
               <div
                 key={i}
-                className="h-1 rounded-full transition-all duration-300"
+                onClick={() => goTo(i)}
+                className="h-1 rounded-full transition-all duration-300 cursor-pointer"
                 style={{
                   width: i === step ? 24 : 6,
                   background: i < step ? '#16a34a' : i === step ? '#2563eb' : '#30363d',
