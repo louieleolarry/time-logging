@@ -8,10 +8,11 @@
 # What it does:
 #   1. Downloads JiraTimeTracker.zip from the latest GitHub Release via curl
 #      (curl does NOT apply the macOS quarantine flag — no Gatekeeper warning)
-#   2. Extracts JiraTimeTracker.app to ~/Applications/
-#   3. Strips any residual quarantine flags
-#   4. Opens the app — which extracts the wizard and launches the setup wizard
-#      in your browser automatically
+#   2. Removes any previous .app bundle AND extracted wizard folder
+#   3. Extracts JiraTimeTracker.app to ~/Applications/
+#   4. Strips any residual quarantine flags
+#   5. Opens the app — which extracts the wizard fresh and launches the setup
+#      wizard in your browser automatically
 #
 # To re-open the wizard later: double-click JiraTimeTracker.app in ~/Applications
 # ─────────────────────────────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ REPO="louieleolarry/time-logging"
 APP_NAME="JiraTimeTracker"
 INSTALL_DIR="${HOME}/Applications"
 APP_PATH="${INSTALL_DIR}/${APP_NAME}.app"
+WIZARD_DIR="${INSTALL_DIR}/${APP_NAME}"   # extracted wizard lives here
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
@@ -61,10 +63,14 @@ TMP_ZIP="$(mktemp /tmp/JiraTimeTracker-XXXXXX.zip)"
 curl -fsSL "$RELEASE_URL" -o "$TMP_ZIP"
 success "Downloaded"
 
-# ── Remove any existing installation ─────────────────────────────────────────
+# ── Remove any existing installation (app bundle AND extracted wizard) ────────
 if [[ -d "${APP_PATH}" ]]; then
-  info "Removing previous installation..."
+  info "Removing previous app bundle..."
   rm -rf "${APP_PATH}"
+fi
+if [[ -d "${WIZARD_DIR}" ]]; then
+  info "Removing previous wizard files..."
+  rm -rf "${WIZARD_DIR}"
 fi
 
 # ── Extract the .app bundle ───────────────────────────────────────────────────
