@@ -47,15 +47,9 @@ echo ""
 # ── Ensure ~/Applications exists ─────────────────────────────────────────────
 mkdir -p "${INSTALL_DIR}"
 
-# ── Get latest release download URL ──────────────────────────────────────────
+# ── Download URL (direct — no API call needed, avoids rate limits) ─────────────
 info "Fetching latest release info..."
-RELEASE_URL=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-  | grep '"browser_download_url"' \
-  | grep 'JiraTimeTracker\.zip' \
-  | sed 's/.*"browser_download_url": "\(.*\)"/\1/' \
-  | head -1)
-
-[[ -n "$RELEASE_URL" ]] || error "Could not find JiraTimeTracker.zip in the latest release. Check https://github.com/${REPO}/releases"
+RELEASE_URL="https://github.com/${REPO}/releases/download/v1.1.0/JiraTimeTracker.zip"
 
 info "Downloading ${APP_NAME}..."
 TMP_ZIP="$(mktemp /tmp/JiraTimeTracker-XXXXXX.zip)"
