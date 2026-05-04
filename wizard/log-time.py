@@ -89,17 +89,25 @@ def read_stickies(script_dir):
     )
     _time_range_re = _re.compile(r'\d{1,2}:\d{2}\s*(?:-->|->|–>|—>|-)\s*\d{1,2}:\d{2}')
 
-    def strip_rtf(rtf_bytes):
-        """Extract plain text from RTF content."""
+    def strip_rtf(rtf_file_path):
+        """Extract plain text from an RTF/RTFD file using macOS textutil."""
         try:
-            text = rtf_bytes.decode("utf-8", errors="replace")
+            result = subprocess.run(
+                ['/usr/bin/textutil', '-convert', 'txt', '-stdout', str(rtf_file_path)],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
         except Exception:
-            text = rtf_bytes.decode("latin-1", errors="replace")
-        text = _re.sub(r'\\\\[a-z]+\d*\s?', '', text)
-        text = _re.sub(r'\{[^{}]*\}', '', text)
-        text = _re.sub(r'\\[{}]', '', text)
+            pass
+        # Fallback: naive regex strip if textutil fails
+        try:
+            raw = Path(rtf_file_path).read_bytes()
+            text = raw.decode('utf-8', errors='replace')
+        except Exception:
+            return ''
         text = _re.sub(r'\\[a-z]+\d*\s?', ' ', text)
-        text = _re.sub(r'\{|\}', '', text)
+        text = _re.sub(r'[{}\\]', '', text)
         text = _re.sub(r'[ \t]+', ' ', text)
         text = '\n'.join(line.strip() for line in text.splitlines() if line.strip())
         return text.strip()
@@ -112,7 +120,7 @@ def read_stickies(script_dir):
         if not rtf_file.exists():
             continue
         try:
-            plain = strip_rtf(rtf_file.read_bytes())
+            plain = strip_rtf(rtf_file)
         except Exception as e:
             print(f"Warning: could not read {rtf_file}: {e}", file=sys.stderr)
             continue
