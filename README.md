@@ -1,6 +1,6 @@
 # JiraTimeTracker
 
-A macOS application that automates logging time entries to Jira using Claude Code CLI and a scheduled launchd cron job.
+A macOS application that automatically logs your daily time entries to Jira using a scheduled launchd cron job. Reads from Mac Notes, Stickies, Google Sheets, or Google Docs — posts directly to the Jira REST API.
 
 ---
 
@@ -13,16 +13,18 @@ curl -fsSL https://raw.githubusercontent.com/louieleolarry/time-logging/main/ins
 ```
 
 That's it. The installer will:
-1. Download `JiraTimeTracker.app` directly via `curl` (no Gatekeeper warning)
-2. Install it to `~/Applications/`
-3. Extract the setup wizard
-4. Launch the wizard automatically in your browser
+1. Download `jira-time-tracker-v1.1.0.zip` from the latest GitHub Release
+2. Extract it to `~/Applications/JiraTimeTracker/`
+3. Launch the setup wizard automatically in your browser
+
 
 ---
 
 ## Running Again Later
 
-To re-open the wizard and modify your settings, simply double-click **`JiraTimeTracker.app`** in `~/Applications`. All your existing settings will be pre-filled — only change what you need.
+To re-open the wizard and modify your settings, Run: `bash ~/Applications/JiraTimeTracker/wizard/setup.sh`
+
+All your existing settings will be pre-filled — only change what you need.
 
 ---
 
@@ -30,10 +32,10 @@ To re-open the wizard and modify your settings, simply double-click **`JiraTimeT
 
 The setup wizard walks you through:
 
-1. **Choose Source** — Mac Notes, Google Sheets, or Google Docs
+1. **Choose Source** — Mac Notes, Stickies, Google Sheets, or Google Docs
 2. **Jira Credentials** — your Jira URL, email, and API token
 3. **Charge Codes** — RR, Standup, Code Review project defaults
-4. **Install Dependencies** — mcp-atlassian, Claude Code CLI check
+4. **Install Dependencies** — installs `requests` and any source-specific packages
 5. **Configure** — review settings and set your daily logging schedule
 6. **Test & Verify** — confirm your Jira connection works
 7. **Done** — launchd agent installed and running
@@ -64,7 +66,7 @@ Dry run (preview without posting):
 ## Uninstall
 
 ```bash
-cd ~/Applications/JiraTimeTracker/wizard && bash uninstall.sh
+bash ~/Applications/JiraTimeTracker/wizard/uninstall.sh
 ```
 
 This removes the launchd agent, config, and logs.
