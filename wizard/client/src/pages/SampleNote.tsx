@@ -71,12 +71,15 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
         STEP 9 OF 10
       </div>
       <h1 className="text-2xl font-bold mb-2" style={{ color: '#e6edf3' }}>Sample Note</h1>
-      <p className="text-sm mb-1" style={{ color: '#8b949e' }}>
-        Paste a typical day's time entry note below. We'll parse it and show you exactly what would be logged to Jira — so you can verify the format looks right before your first automated run.
+      <p className="text-sm mb-2" style={{ color: '#8b949e' }}>
+        Paste <strong style={{ color: '#e6edf3' }}>one full day's worth of time entries</strong> below — exactly as they appear in your sticky note or notes app. We'll parse it and show you exactly what would be logged to Jira.
       </p>
-      <p className="text-xs mb-5" style={{ color: '#484f58' }}>
-        Include the date header (e.g. <code style={{ color: '#8b949e' }}>Monday, May 5, 2025</code>) and the <code style={{ color: '#8b949e' }}>---</code> separator if your notes use them.
-      </p>
+      <div className="rounded-md px-4 py-3 mb-5 text-xs leading-relaxed" style={{ background: 'rgba(37,99,235,0.08)', border: '1px solid rgba(37,99,235,0.25)', color: '#79c0ff' }}>
+        <strong>Your note must start with the date header</strong> — e.g.{' '}
+        <code style={{ color: '#e6edf3' }}>Monday, May 5, 2026</code> — followed by a{' '}
+        <code style={{ color: '#e6edf3' }}>---</code> separator, then your time blocks.
+        Without the date, the parser cannot determine which day to log.
+      </div>
 
       <textarea
         className="w-full rounded-lg border text-sm font-mono p-3 mb-4 resize-y"
@@ -89,7 +92,7 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
           lineHeight: '1.6',
         }}
         placeholder={
-          "Monday, May 5, 2025\n\n---\n\nfbai-1683\nHyperion standup\n10:00-->10:30\n\nfceh-109\nRR - some ticket description\n10:45-->11:45\n\nfbai-875\nRR - another task\n1:00-->3:00"
+          "Monday, May 5, 2026\n\n---\n\nfbai-1683\nHyperion standup\n10:00-->10:30\n\nfceh-109\nRR - some ticket description\n10:45-->11:45\n\nfbai-875\nRR - another task\n1:00-->3:00\n\nfbai-875\nRR - open-ended task\n4:30-->"
         }
         value={note}
         onChange={(e) => { setNote(e.target.value); setResult(null); }}

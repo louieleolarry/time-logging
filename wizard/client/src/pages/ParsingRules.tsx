@@ -309,7 +309,9 @@ export default function ParsingRules({ state, update, onNext, onBack }: Props) {
             </span>
           </div>
           <p className="text-xs mb-4 leading-relaxed" style={{ color: '#484f58' }}>
-            Paste a full day's note (including the date header and <code style={{ color: '#8b949e' }}>---</code> separator).
+            Paste <strong style={{ color: '#8b949e' }}>one full day's note</strong> — starting with the date header (e.g.{' '}
+            <code style={{ color: '#79c0ff' }}>Monday, May 5, 2026</code>) and the{' '}
+            <code style={{ color: '#79c0ff' }}>---</code> separator, then all your time blocks for that day.
             Claude will analyze it and auto-apply suggested skip patterns and keyword mappings — you can undo any suggestion individually.
           </p>
 
@@ -325,7 +327,7 @@ export default function ParsingRules({ state, update, onNext, onBack }: Props) {
               lineHeight: '1.6',
               fontFamily: 'JetBrains Mono, monospace',
             }}
-            placeholder={"Monday, May 5, 2026\n\n---\n\nfbai-1683\nHyperion standup\n10:00-->10:30\n\nlunch\nin-house chkn\n12:30-->1:00\n\nfbai-875\nRR - some task\n1:00-->3:00"}
+            placeholder={"Monday, May 5, 2026\n\n---\n\nfbai-1683\nHyperion standup\n10:00-->10:30\n\nfceh-109\nRR - some ticket description\n10:45-->11:45\n\nlunch\nin-house chkn\n12:30-->1:00\n\nfbai-875\nRR - some task\n1:00-->3:00\n\nfbai-875\nRR - open-ended task\n4:30-->"}
             value={sampleText}
             onChange={(e) => { setSampleText(e.target.value); setAiResult(null); }}
           />
