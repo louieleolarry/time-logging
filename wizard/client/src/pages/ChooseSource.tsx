@@ -71,7 +71,7 @@ export default function ChooseSource({ state, update, onNext, onBack }: Props) {
 
   return (
     <PageShell
-      badge="Step 3 of 9"
+      badge="Step 2 of 9"
       title="Choose Your Time Entry Source"
       subtitle="Select one or more sources where you record your daily time entries. You can enable multiple sources — the most recently modified one will be used each day."
       footer={

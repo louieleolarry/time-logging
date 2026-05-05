@@ -74,7 +74,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
 
   return (
     <PageShell
-      badge="Step 7 of 10"
+      badge="Step 7 of 9"
       title="Configure"
       subtitle="Review your settings and save the configuration to your Mac."
       footer={

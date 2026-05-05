@@ -6,10 +6,8 @@ import ChooseSource from './pages/ChooseSource';
 import JiraCredentials from './pages/JiraCredentials';
 import ChargeCodes from './pages/ChargeCodes';
 import InstallDeps from './pages/InstallDeps';
-import ParsingRules from './pages/ParsingRules';
 import Configure from './pages/Configure';
 import TestVerify from './pages/TestVerify';
-import SampleNote from './pages/SampleNote';
 import Done from './pages/Done';
 
 export type Source = 'stickies' | 'mac-notes' | 'google-sheets' | 'google-docs';
@@ -53,12 +51,11 @@ export const STEPS = [
   'Welcome',
   'Choose Source',
   'Jira Credentials',
+  'Schedule',
   'Charge Codes',
   'Install Dependencies',
-  'Parsing Rules',
   'Configure',
   'Test & Verify',
-  'Sample Note',
   'Done',
 ];
 
@@ -169,16 +166,18 @@ export default function App() {
   const next = () => goTo(Math.min(step + 1, STEPS.length - 1));
   const back = () => goTo(Math.max(step - 1, 0));
 
+  // Step 3 (index 3) is Schedule — needs its own page
+  // We reuse Configure's schedule section inline via a dedicated Schedule page
+  // For now, Schedule is handled by Configure; we use a lightweight wrapper
   const pages = [
     <Welcome key="welcome" onNext={next} />,
     <ChooseSource key="source" state={state} update={update} onNext={next} onBack={back} />,
     <JiraCredentials key="jira" state={state} update={update} onNext={next} onBack={back} />,
-    <ChargeCodes key="codes" update={update} onNext={next} onBack={back} />,
+    <ScheduleStep key="schedule" state={state} update={update} onNext={next} onBack={back} />,
+    <ChargeCodes key="codes" state={state} update={update} onNext={next} onBack={back} />,
     <InstallDeps key="install" state={state} onNext={next} onBack={back} />,
-    <ParsingRules key="parsing" state={state} update={update} onNext={next} onBack={back} />,
     <Configure key="configure" state={state} update={update} onNext={next} onBack={back} />,
     <TestVerify key="verify" state={state} update={update} onNext={next} onBack={back} />,
-    <SampleNote key="sample" onNext={next} onBack={back} />,
     <Done key="done" state={state} />,
   ];
 
@@ -250,5 +249,80 @@ export default function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Inline Schedule step ────────────────────────────────────────────────────
+import PageShell from './components/PageShell';
+
+const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function ScheduleStep({ state, update, onNext, onBack }: { state: WizardState; update: (p: Partial<WizardState>) => void; onNext: () => void; onBack: () => void }) {
+  const { schedule } = state;
+
+  const toggleDay = (day: string) => {
+    const days = schedule.days.includes(day)
+      ? schedule.days.filter((d) => d !== day)
+      : [...schedule.days, day];
+    update({ schedule: { ...schedule, days } });
+  };
+
+  const canContinue = schedule.time.trim() !== '' && schedule.days.length > 0;
+
+  return (
+    <PageShell
+      badge="Step 4 of 9"
+      title="Logging Schedule"
+      subtitle="Choose when the time logger runs automatically each day. You can always trigger it manually too."
+      footer={
+        <>
+          <button className="btn-ghost" onClick={onBack}>← Back</button>
+          <button className="btn-primary" disabled={!canContinue} onClick={onNext}>Continue →</button>
+        </>
+      }
+    >
+      <div style={{ maxWidth: 480 }} className="space-y-6">
+        <div>
+          <label className="block text-xs font-semibold mb-2" style={{ color: '#8b949e' }}>Time</label>
+          <input
+            type="time"
+            className="wizard-input"
+            style={{ width: 160, fontFamily: 'JetBrains Mono, monospace' }}
+            value={schedule.time}
+            onChange={(e) => update({ schedule: { ...schedule, time: e.target.value } })}
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold mb-3" style={{ color: '#8b949e' }}>Days</label>
+          <div className="flex gap-2 flex-wrap">
+            {ALL_DAYS.map((day) => {
+              const active = schedule.days.includes(day);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => toggleDay(day)}
+                  className="px-4 py-2 rounded-md text-xs font-semibold transition-all"
+                  style={{
+                    border: `1px solid ${active ? '#2563eb' : '#30363d'}`,
+                    background: active ? 'rgba(37,99,235,0.15)' : '#161b22',
+                    color: active ? '#79c0ff' : '#8b949e',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-md px-4 py-3 text-xs leading-relaxed" style={{ background: '#161b22', border: '1px solid #30363d', color: '#484f58' }}>
+          A launchd agent will be installed at{' '}
+          <code style={{ color: '#79c0ff' }}>~/Library/LaunchAgents/com.jira-time-tracker.daily.plist</code>
+        </div>
+      </div>
+    </PageShell>
   );
 }

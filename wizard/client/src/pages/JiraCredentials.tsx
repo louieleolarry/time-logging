@@ -20,7 +20,7 @@ export default function JiraCredentials({ state, update, onNext, onBack }: Props
 
   return (
     <PageShell
-      badge="Step 4 of 9"
+      badge="Step 3 of 9"
       title="Jira Credentials"
       subtitle="Your credentials are stored locally in ~/.jira-time-tracker/config.json and never leave your machine."
       footer={
