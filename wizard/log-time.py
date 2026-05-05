@@ -207,6 +207,86 @@ def extract_date_from_text(text):
 
     return None
 
+# ── Day-section extractor ────────────────────────────────────────────────────
+
+def extract_day_section(text, target_date):
+    """
+    Given a multi-day note (e.g. a Stickies note with multiple day sections),
+    return only the portion that belongs to `target_date` (YYYY-MM-DD).
+
+    A day section is delimited by:
+      - A date header line (any format recognised by extract_date_from_text)
+      - Optionally followed by a '---' separator
+
+    Algorithm:
+      1. Walk lines top-to-bottom.
+      2. When a line is recognised as a date header, record which date it is.
+      3. Collect lines until the next date header (or end of text).
+      4. Return the collected lines for the section whose date == target_date.
+
+    If no date headers are found at all (single-day note), the full text is
+    returned unchanged so existing behaviour is preserved.
+    """
+    # Regex that matches a line that IS a date header (same patterns as
+    # extract_date_from_text but tested against the whole line, not just
+    # the first 5 lines).
+    _date_header_re = re.compile(
+        r'^(?:'
+        # ISO: 2026-04-25
+        r'\d{4}-\d{2}-\d{2}'
+        r'|'
+        # US numeric: 4/25/2026 or 4/25/26 or 4/25
+        r'\d{1,2}/\d{1,2}(?:/\d{2,4})?'
+        r'|'
+        # "Monday, May 5, 2026" or "May 5, 2026" or "May 5 2026" etc.
+        r'(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*[.,]?\s+)?'
+        r'(?:january|february|march|april|may|june|july|august|september|october|november|december'
+        r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*[.,]?\s+\d{1,2}(?:[,.]?\s+\d{4})?'
+        r'|'
+        # Day-first: 25 April 2026
+        r'\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december'
+        r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:[,.]?\s+\d{4})?'
+        r')\s*$',
+        re.IGNORECASE
+    )
+
+    lines = text.split('\n')
+
+    # Collect sections: list of (date_str_or_None, [lines])
+    sections = []
+    current_date = None
+    current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if _date_header_re.match(stripped):
+            # Save previous section
+            if current_lines or current_date is not None:
+                sections.append((current_date, current_lines))
+            # Start new section
+            current_date = extract_date_from_text(stripped)
+            current_lines = [line]  # include the header line itself
+        else:
+            current_lines.append(line)
+
+    # Save last section
+    if current_lines or current_date is not None:
+        sections.append((current_date, current_lines))
+
+    # If no date headers were found at all, return original text
+    if all(s[0] is None for s in sections):
+        return text
+
+    # Find the section matching target_date
+    for sec_date, sec_lines in sections:
+        if sec_date == target_date:
+            return '\n'.join(sec_lines)
+
+    # target_date not found in any section — return empty string
+    # (caller will handle "no entries" gracefully)
+    return ''
+
+
 # ── Time entry parser ──────────────────────────────────────────────────────────
 
 # Matches: 9:00-->10:30, 9:00->10:30, 9:00-10:30, 9:00–10:30
@@ -555,6 +635,11 @@ def main():
         except SystemExit:
             charge_codes = {}
         detected_date = extract_date_from_text(text)
+        # Scope to just the detected day's section (handles multi-day notes in preview)
+        if detected_date:
+            day_text = extract_day_section(text, detected_date)
+            if day_text.strip():
+                text = day_text
         entries = parse_entries(text, charge_codes)
         output = {
             "date": detected_date,
@@ -614,10 +699,18 @@ def main():
             print(f"📅 No date found in note — defaulting to today: {log_date}")
     else:
         print(f"📅 Logging for date: {log_date} (from --date flag)")
+
+    # Extract only the section for the target date (handles multi-day notes)
+    day_text = extract_day_section(text, log_date)
+    if not day_text.strip():
+        print(f"No entries found for {log_date} in the note (no matching day section).")
+        sys.exit(0)
+    if day_text is not text:
+        print(f"📋 Multi-day note detected — using only the section for {log_date}")
     print()
 
     # Parse entries
-    entries = parse_entries(text, charge_codes)
+    entries = parse_entries(day_text, charge_codes)
 
     if not entries:
         print("No parseable time entries found.")
