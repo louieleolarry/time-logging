@@ -633,8 +633,23 @@ def parse_entries(text, charge_codes, parsing_rules=None):
 
 # ── Jira API ──────────────────────────────────────────────────────────────────
 
+def _extract_comment_text(comment_field):
+    """Extract plain text from a Jira ADF comment field (or plain string)."""
+    if isinstance(comment_field, str):
+        return comment_field.strip()
+    if isinstance(comment_field, dict):
+        # Atlassian Document Format
+        parts = []
+        for block in comment_field.get("content", []):
+            for inline in block.get("content", []):
+                if inline.get("type") == "text":
+                    parts.append(inline.get("text", ""))
+        return "".join(parts).strip()
+    return ""
+
+
 def get_existing_worklogs(jira_url, email, token, issue_key, log_date):
-    """Return set of (timeSpentSeconds, started_date) tuples already logged for this issue on this date."""
+    """Return set of (timeSpentSeconds, comment_text) tuples already logged for this issue on this date."""
     url = jira_url.rstrip("/") + f"/rest/api/3/issue/{issue_key}/worklog"
     auth = b64encode(f"{email}:{token}".encode()).decode()
     headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
@@ -648,7 +663,9 @@ def get_existing_worklogs(jira_url, email, token, issue_key, log_date):
         for wl in worklogs:
             started = wl.get("started", "")
             if started.startswith(log_date):
-                existing.add(wl.get("timeSpentSeconds", 0))
+                seconds = wl.get("timeSpentSeconds", 0)
+                comment_text = _extract_comment_text(wl.get("comment", ""))
+                existing.add((seconds, comment_text))
         return existing
     except Exception:
         return set()
@@ -809,10 +826,12 @@ def main():
     skip_count = 0
     for e in entries:
         # Check Jira for existing worklogs on this date for this issue
-        existing_seconds = get_existing_worklogs(jira_url, email, token, e["key"], log_date)
+        # Only skip if BOTH duration AND comment text are an exact match
+        existing_worklogs = get_existing_worklogs(jira_url, email, token, e["key"], log_date)
         entry_seconds = e["minutes"] * 60
-        if entry_seconds in existing_seconds:
-            print(f"  ⏭  {e['key']} — {minutes_to_jira(e['minutes'])} already logged on {log_date}, skipping")
+        entry_comment = e["comment"].strip()
+        if (entry_seconds, entry_comment) in existing_worklogs:
+            print(f"  ⏭  {e['key']} — {minutes_to_jira(e['minutes'])} already logged on {log_date} (exact match), skipping")
             skip_count += 1
             continue
         resp = post_worklog(jira_url, email, token, e["key"], e["minutes"], e["comment"], log_date)
