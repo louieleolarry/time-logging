@@ -89,7 +89,20 @@ fi
 if [[ ! -d "${WIZARD_DIR}/node_modules" ]]; then
   info "Installing server dependencies..."
   cd "${WIZARD_DIR}"
-  "$NODE_CMD" "$(which npm 2>/dev/null || echo npm)" install --silent
+  # Locate npm alongside the node binary, or fall back to PATH
+  NPM_CMD=""
+  NODE_BIN_DIR="$(dirname "$(command -v "$NODE_CMD" 2>/dev/null || echo "$NODE_CMD")")"
+  if [[ -x "${NODE_BIN_DIR}/npm" ]]; then
+    NPM_CMD="${NODE_BIN_DIR}/npm"
+  elif command -v npm &>/dev/null; then
+    NPM_CMD="npm"
+  elif command -v pnpm &>/dev/null; then
+    NPM_CMD="pnpm"
+  else
+    error "npm not found. Please install Node.js from https://nodejs.org and re-run."
+    exit 1
+  fi
+  "$NPM_CMD" install --silent 2>&1 || { error "npm install failed. Check your Node.js installation."; exit 1; }
   success "Dependencies installed"
 fi
 
