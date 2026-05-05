@@ -9,12 +9,22 @@ interface ParsedEntry {
   key: string;
   time: string;
   comment: string;
+  minutes: number;
 }
 
 interface ParseResult {
   entries: ParsedEntry[];
   date: string | null;
   error?: string;
+}
+
+function formatMinutes(mins: number): string {
+  if (!mins) return '—';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
 }
 
 export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
@@ -43,7 +53,6 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
 
   const handleSave = async () => {
     if (!note.trim()) { onNext(); return; }
-    // Save the sample note to config for reference
     try {
       await fetch('/api/config/sample-note', {
         method: 'POST',
@@ -54,14 +63,19 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
     onNext();
   };
 
+  const totalMinutes = result?.entries?.reduce((sum, e) => sum + (e.minutes || 0), 0) ?? 0;
+
   return (
     <div className="px-10 py-8 max-w-2xl">
       <div className="mb-2 text-xs font-semibold tracking-widest uppercase" style={{ color: '#8b949e' }}>
         STEP 7 OF 9
       </div>
       <h1 className="text-2xl font-bold mb-2" style={{ color: '#e6edf3' }}>Sample Note</h1>
-      <p className="text-sm mb-6" style={{ color: '#8b949e' }}>
+      <p className="text-sm mb-1" style={{ color: '#8b949e' }}>
         Paste a typical day's time entry note below. We'll parse it and show you exactly what would be logged to Jira — so you can verify the format looks right before your first automated run.
+      </p>
+      <p className="text-xs mb-5" style={{ color: '#484f58' }}>
+        Include the date header (e.g. <code style={{ color: '#8b949e' }}>Monday, May 5, 2025</code>) and the <code style={{ color: '#8b949e' }}>---</code> separator if your notes use them.
       </p>
 
       <textarea
@@ -70,10 +84,13 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
           background: '#161b22',
           borderColor: '#30363d',
           color: '#e6edf3',
-          minHeight: 220,
+          minHeight: 240,
           outline: 'none',
+          lineHeight: '1.6',
         }}
-        placeholder={"fbai-1683\nHyperion standup\n10:00-->10:30\n\nfceh-109\nRR - some ticket description\n10:45-->11:45\n\nfbai-875\nRR - another task\n1:00-->3:00"}
+        placeholder={
+          "Monday, May 5, 2025\n\n---\n\nfbai-1683\nHyperion standup\n10:00-->10:30\n\nfceh-109\nRR - some ticket description\n10:45-->11:45\n\nfbai-875\nRR - another task\n1:00-->3:00"
+        }
         value={note}
         onChange={(e) => { setNote(e.target.value); setResult(null); }}
       />
@@ -101,45 +118,80 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
       </div>
 
       {result && (
-        <div className="rounded-lg border p-4 mb-6" style={{ borderColor: result.error ? '#f85149' : '#30363d', background: '#161b22' }}>
+        <div
+          className="rounded-lg border mb-6 overflow-hidden"
+          style={{ borderColor: result.error ? '#f85149' : '#30363d', background: '#161b22' }}
+        >
           {result.error ? (
-            <p className="text-sm" style={{ color: '#f85149' }}>{result.error}</p>
+            <p className="text-sm p-4" style={{ color: '#f85149' }}>{result.error}</p>
+          ) : result.entries.length === 0 ? (
+            <div className="p-4">
+              <p className="text-sm" style={{ color: '#f0883e' }}>
+                ⚠️ No parseable time entries found.
+              </p>
+              <p className="text-xs mt-1" style={{ color: '#484f58' }}>
+                Make sure each block has a Jira key (e.g. <code>FBAI-875</code>) on the first line and a time range (e.g. <code>10:00--&gt;11:30</code>) on the last line. Blocks without a time range are skipped.
+              </p>
+            </div>
           ) : (
             <>
-              {result.date && (
-                <p className="text-xs mb-3" style={{ color: '#8b949e' }}>
-                  📅 Date detected: <span style={{ color: '#e6edf3' }}>{result.date}</span>
-                </p>
-              )}
-              {result.entries.length === 0 ? (
-                <p className="text-sm" style={{ color: '#f0883e' }}>
-                  ⚠️ No parseable time entries found. Check that your note has Jira keys (e.g. <code>FBAI-875</code>) and time ranges (e.g. <code>10:00--&gt;11:30</code>).
-                </p>
-              ) : (
-                <>
-                  <p className="text-xs font-semibold mb-2" style={{ color: '#8b949e' }}>
-                    {result.entries.length} {result.entries.length === 1 ? 'entry' : 'entries'} would be logged:
-                  </p>
-                  <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ color: '#8b949e' }}>
-                        <th className="text-left pb-2 pr-4">Issue Key</th>
-                        <th className="text-left pb-2 pr-4">Time</th>
-                        <th className="text-left pb-2">Comment</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.entries.map((e, i) => (
-                        <tr key={i} style={{ borderTop: '1px solid #21262d' }}>
-                          <td className="py-1.5 pr-4 font-mono" style={{ color: '#58a6ff' }}>{e.key}</td>
-                          <td className="py-1.5 pr-4" style={{ color: '#56d364' }}>{e.time}</td>
-                          <td className="py-1.5" style={{ color: '#e6edf3' }}>{e.comment}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              )}
+              {/* Header bar */}
+              <div
+                className="flex items-center justify-between px-4 py-2 border-b"
+                style={{ borderColor: '#21262d', background: '#0d1117' }}
+              >
+                <span className="text-xs font-semibold" style={{ color: '#8b949e' }}>
+                  {result.entries.length} {result.entries.length === 1 ? 'entry' : 'entries'} would be logged
+                  {result.date && (
+                    <span style={{ color: '#484f58' }}> · </span>
+                  )}
+                  {result.date && (
+                    <span style={{ color: '#58a6ff' }}>📅 {result.date}</span>
+                  )}
+                </span>
+                <span className="text-xs font-semibold" style={{ color: '#56d364' }}>
+                  Total: {formatMinutes(totalMinutes)}
+                </span>
+              </div>
+
+              {/* Table */}
+              <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#0d1117' }}>
+                    <th className="text-left px-4 py-2" style={{ color: '#484f58', fontWeight: 600, width: '110px' }}>Issue Key</th>
+                    <th className="text-left px-4 py-2" style={{ color: '#484f58', fontWeight: 600 }}>Description</th>
+                    <th className="text-right px-4 py-2" style={{ color: '#484f58', fontWeight: 600, width: '80px' }}>Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.entries.map((e, i) => (
+                    <tr
+                      key={i}
+                      style={{ borderTop: '1px solid #21262d' }}
+                    >
+                      <td className="px-4 py-2 font-mono" style={{ color: '#58a6ff' }}>
+                        {e.key.toUpperCase()}
+                      </td>
+                      <td className="px-4 py-2" style={{ color: '#e6edf3' }}>
+                        {e.comment}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono" style={{ color: '#56d364' }}>
+                        {formatMinutes(e.minutes)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid #30363d', background: '#0d1117' }}>
+                    <td className="px-4 py-2" colSpan={2} style={{ color: '#484f58', fontSize: '11px' }}>
+                      ✓ These entries will be posted to Jira (duplicates skipped automatically)
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono font-semibold" style={{ color: '#56d364' }}>
+                      {formatMinutes(totalMinutes)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             </>
           )}
         </div>
@@ -158,7 +210,7 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
           className="px-5 py-2 rounded-md text-sm font-medium"
           style={{ background: '#2563eb', color: '#fff', cursor: 'pointer' }}
         >
-          {note.trim() ? 'Looks Good — Continue' : 'Skip'}
+          {note.trim() && result && result.entries.length > 0 ? 'Looks Good — Continue' : 'Skip'}
         </button>
       </div>
     </div>

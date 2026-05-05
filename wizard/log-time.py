@@ -548,8 +548,12 @@ def main():
         except Exception as e:
             print(json.dumps({"entries": [], "date": None, "error": str(e)}))
             sys.exit(0)
-        config = load_config()
-        charge_codes = config.get("charge_codes", {})
+        # Load config if available, but don't require it for preview
+        try:
+            config = load_config()
+            charge_codes = config.get("charge_codes", {})
+        except SystemExit:
+            charge_codes = {}
         detected_date = extract_date_from_text(text)
         entries = parse_entries(text, charge_codes)
         output = {
@@ -559,6 +563,7 @@ def main():
                     "key": e["key"],
                     "time": minutes_to_jira(e["minutes"]),
                     "comment": e["comment"],
+                    "minutes": e["minutes"],
                 }
                 for e in entries
             ]
