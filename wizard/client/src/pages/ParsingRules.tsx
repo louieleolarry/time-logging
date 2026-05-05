@@ -305,7 +305,7 @@ export default function ParsingRules({ state, update, onNext, onBack }: Props) {
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-semibold" style={{ color: '#e6edf3' }}>AI Rule Analysis</span>
             <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(37,99,235,0.15)', color: '#79c0ff', border: '1px solid rgba(37,99,235,0.3)' }}>
-              Claude
+              Claude Code
             </span>
           </div>
           <p className="text-xs mb-4 leading-relaxed" style={{ color: '#484f58' }}>
@@ -337,7 +337,7 @@ export default function ParsingRules({ state, update, onNext, onBack }: Props) {
             onClick={runAIAnalysis}
             disabled={!sampleText.trim() || aiLoading}
           >
-            {aiLoading ? '✦ Analyzing…' : '✦ Analyze with AI'}
+            {aiLoading ? '✦ Analyzing…' : '✦ Analyze with Claude Code'}
           </button>
 
           {aiResult && (

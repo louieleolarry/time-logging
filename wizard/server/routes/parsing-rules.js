@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { execFile } from 'child_process';
+import { execFile, exec } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -8,45 +8,55 @@ import os from 'os';
 const router = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Locate the `claude` binary — check common install paths on macOS
+function findClaudeBin(callback) {
+  const candidates = [
+    'claude',
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    `${os.homedir()}/.npm-global/bin/claude`,
+    `${os.homedir()}/.local/bin/claude`,
+  ];
+
+  // Try PATH first
+  exec('which claude', (err, stdout) => {
+    if (!err && stdout.trim()) return callback(null, stdout.trim());
+
+    // Try each candidate
+    for (const c of candidates) {
+      try {
+        if (fs.existsSync(c)) return callback(null, c);
+      } catch { /* skip */ }
+    }
+
+    callback(new Error('claude CLI not found. Make sure Claude Code is installed (npm install -g @anthropic-ai/claude-code).'));
+  });
+}
+
 // POST /api/parsing-rules/analyze
-// Sends the note text + current rules to Claude and returns structured suggestions.
-router.post('/analyze', async (req, res) => {
+// Uses `claude -p` (Claude Code non-interactive mode) to analyze the note and suggest rules.
+router.post('/analyze', (req, res) => {
   const { note_text, current_rules, charge_codes } = req.body || {};
 
   if (!note_text || typeof note_text !== 'string') {
     return res.json({ suggestions: [], summary: '', error: 'No note text provided.' });
   }
 
-  // Build a Python script that calls the OpenAI-compatible API
-  const scriptPath = path.join(os.tmpdir(), `jtt-ai-analyze-${Date.now()}.py`);
+  const currentSkip = (current_rules?.skip_patterns || []).join(', ') || 'none';
+  const currentMappings = (current_rules?.keyword_mappings || [])
+    .map((m) => `${m.keyword} → ${m.key}`)
+    .join(', ') || 'none';
 
-  const currentSkip = JSON.stringify((current_rules?.skip_patterns || []).join(', ') || 'none');
-  const currentMappings = JSON.stringify(
-    (current_rules?.keyword_mappings || [])
-      .map((m) => `${m.keyword} → ${m.key}`)
-      .join(', ') || 'none'
-  );
+  const prompt = `You are a parsing rules assistant for a Jira time-tracking tool.
+Analyze the following time log note and suggest parsing rules to improve accuracy.
 
-  const noteEscaped = JSON.stringify(note_text);
+TIME LOG NOTE:
+${note_text}
 
-  const script = `
-import os, json, sys
-try:
-    from openai import OpenAI
-except ImportError:
-    print(json.dumps({"suggestions": [], "summary": "", "error": "openai package not installed. Run: pip3 install openai"}))
-    sys.exit(0)
+CURRENT SKIP PATTERNS ALREADY CONFIGURED: ${currentSkip}
+CURRENT KEYWORD MAPPINGS ALREADY CONFIGURED: ${currentMappings}
 
-client = OpenAI()
-
-note = ${noteEscaped}
-current_skip = ${currentSkip}
-current_mappings = ${currentMappings}
-
-system_prompt = """You are a parsing rules assistant for a Jira time-tracking tool.
-You analyze a user's time log note and suggest parsing rules to improve accuracy.
-
-You must return ONLY valid JSON in this exact format:
+Return ONLY valid JSON in this exact format (no markdown, no explanation, just JSON):
 {
   "summary": "one sentence summary of what you found",
   "suggestions": [
@@ -65,62 +75,53 @@ You must return ONLY valid JSON in this exact format:
   ]
 }
 
-Rules for suggestions:
+Rules:
 - Suggest skip_pattern for blocks that are clearly NOT work (lunch, breaks, personal notes, non-billable items with no Jira key)
 - Suggest keyword_mapping ONLY when a block has no Jira key on its first line but has a recognizable keyword that could map to a Jira key visible elsewhere in the note
-- Do NOT suggest mappings for blocks already marked with ??? (those are intentionally skipped)
+- Do NOT suggest patterns already in the current configured lists
 - Do NOT suggest skip_pattern for blocks that already have a Jira key
 - Keep patterns short and specific (e.g. "lunch" not "lunch in-house chicken")
 - If no suggestions are needed, return an empty suggestions array
-- Return at most 8 suggestions total"""
+- Return at most 8 suggestions total`;
 
-user_prompt = f"""Here is the user's time log note:
-
-{note}
-
-Current skip patterns already configured: {current_skip}
-Current keyword mappings already configured: {current_mappings}
-
-Analyze this note and suggest any additional parsing rules that would improve accuracy.
-Only suggest rules that are NOT already configured."""
-
-try:
-    response = client.chat.completions.create(
-        model="gemini-2.5-flash",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.1,
-        max_tokens=1024,
-    )
-    content = response.choices[0].message.content.strip()
-    # Extract JSON from response (handle markdown code blocks)
-    import re
-    json_match = re.search(r'\\{[\\s\\S]*\\}', content)
-    if json_match:
-        result = json.loads(json_match.group(0))
-        print(json.dumps(result))
-    else:
-        print(json.dumps({"suggestions": [], "summary": "Could not parse AI response.", "error": None}))
-except Exception as e:
-    print(json.dumps({"suggestions": [], "summary": "", "error": str(e)}))
-`;
-
-  fs.writeFileSync(scriptPath, script, 'utf8');
-
-  execFile('/usr/bin/python3', [scriptPath], { timeout: 30000 }, (err, stdout, stderr) => {
-    fs.unlink(scriptPath, () => {});
-    if (err && !stdout) {
-      return res.json({ suggestions: [], summary: '', error: stderr || err.message });
+  findClaudeBin((binErr, claudeBin) => {
+    if (binErr) {
+      return res.json({
+        suggestions: [],
+        summary: '',
+        error: `Claude Code not found: ${binErr.message}`,
+      });
     }
-    try {
-      const jsonMatch = stdout.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return res.json(JSON.parse(jsonMatch[0]));
+
+    execFile(
+      claudeBin,
+      ['-p', prompt],
+      { timeout: 45000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err && !stdout) {
+          return res.json({
+            suggestions: [],
+            summary: '',
+            error: `Claude Code error: ${stderr || err.message}`,
+          });
+        }
+
+        // Extract JSON from response (handle any surrounding text)
+        try {
+          const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const result = JSON.parse(jsonMatch[0]);
+            return res.json(result);
+          }
+        } catch { /* fall through */ }
+
+        return res.json({
+          suggestions: [],
+          summary: '',
+          error: 'Could not parse Claude response as JSON.',
+        });
       }
-    } catch { /* fall through */ }
-    return res.json({ suggestions: [], summary: '', error: 'Could not parse AI response.' });
+    );
   });
 });
 
