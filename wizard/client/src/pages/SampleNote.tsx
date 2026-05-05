@@ -68,7 +68,7 @@ export default function SampleNote({ onNext, onBack }: SampleNoteProps) {
   return (
     <div className="px-10 py-8 max-w-2xl">
       <div className="mb-2 text-xs font-semibold tracking-widest uppercase" style={{ color: '#8b949e' }}>
-        STEP 7 OF 9
+        STEP 9 OF 10
       </div>
       <h1 className="text-2xl font-bold mb-2" style={{ color: '#e6edf3' }}>Sample Note</h1>
       <p className="text-sm mb-1" style={{ color: '#8b949e' }}>

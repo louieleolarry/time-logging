@@ -294,6 +294,11 @@ TIME_RANGE_RE = re.compile(
     r'(\d{1,2}):(\d{2})\s*(?:-->|->|–>|—>|-)\s*(\d{1,2}):(\d{2})'
 )
 
+# Matches open-ended ranges: 4:30--> or 4:30-> or 4:30– (no end time)
+OPEN_ENDED_RE = re.compile(
+    r'(\d{1,2}):(\d{2})\s*(?:-->|->|–>|—>|-+>?)\s*$'
+)
+
 # Matches: 1h 30m, 1h, 45m, 45min, 1hr
 DURATION_RE = re.compile(
     r'(?:(\d+)\s*h(?:r|rs|our|ours)?)?\s*(?:(\d+)\s*m(?:in|ins|inutes?)?)?',
@@ -457,14 +462,30 @@ def split_into_blocks(text):
     return blocks
 
 
-def parse_entries(text, charge_codes):
+def parse_entries(text, charge_codes, parsing_rules=None):
     """
     Parse time entries from note text using a block-based approach.
     Each block produces ONE worklog entry — blocks with the same Jira key
     but different descriptions are kept as separate entries.
+
+    parsing_rules (dict, optional) — from config["parsing_rules"]:
+      skip_patterns: list of strings — skip any block whose text contains one of these (case-insensitive)
+      keyword_mappings: list of {keyword, key, label} — map keyword to a Jira key
+      open_ended_time_behavior: "fill_day" | "fixed_15m" (default: "fill_day")
+      target_hours_per_day: float (default: 8.25)
+
     Returns list of dicts: {key, minutes, comment, is_standup}
     """
+    if parsing_rules is None:
+        parsing_rules = {}
+
+    skip_patterns = [p.lower() for p in parsing_rules.get("skip_patterns", [])]
+    keyword_mappings = parsing_rules.get("keyword_mappings", [])  # [{keyword, key, label}]
+    open_ended_behavior = parsing_rules.get("open_ended_time_behavior", "fill_day")
+    target_minutes = int(parsing_rules.get("target_hours_per_day", 8.25) * 60)  # default 495
+
     entries = []        # final list — one entry per block
+    open_ended_entries = []  # blocks with open-ended time ranges (resolved after totalling)
     standup_entry = None
     time_by_key = {}    # used only to pick the right standup code at the end
 
@@ -479,15 +500,30 @@ def parse_entries(text, charge_codes):
         if any(is_skip_line(l) for l in block_lines):
             continue
 
+        # Skip blocks matching user-configured skip patterns
+        block_text_lower = '\n'.join(block_lines).lower()
+        if any(pat in block_text_lower for pat in skip_patterns):
+            continue
+
         # Collect Jira keys — ONLY from the first line of the block
-        # (subsequent lines may reference related tickets but are not the primary key)
         first_line_keys = extract_jira_keys(block_lines[0])
         keys = list(dict.fromkeys(first_line_keys))  # deduplicate, preserve order
 
         # Detect standup block
         is_standup = any(is_standup_line(l) for l in block_lines)
 
-        # Sum all time ranges in the block
+        # Check for open-ended time range (e.g. 4:30-->)
+        has_open_ended = False
+        open_ended_start_min = None
+        for line in block_lines:
+            oe = OPEN_ENDED_RE.search(line)
+            # Only treat as open-ended if there is NO complete time range on the same line
+            if oe and not TIME_RANGE_RE.search(line):
+                has_open_ended = True
+                open_ended_start_min = int(oe.group(1)) * 60 + int(oe.group(2))
+                break
+
+        # Sum all COMPLETE time ranges in the block
         total_minutes = 0
         for line in block_lines:
             dur = parse_time_range(line)
@@ -495,32 +531,35 @@ def parse_entries(text, charge_codes):
                 total_minutes += dur
 
         # If no time range found, try duration strings
-        if total_minutes == 0:
+        if total_minutes == 0 and not has_open_ended:
             for line in block_lines:
                 dur = parse_duration(line)
                 if dur and dur > 0:
                     total_minutes += dur
-                    break  # only use first explicit duration if no time range
+                    break
 
-        # Standup: always 30m, deduplicated to one entry
+        # Standup: deduplicated to one entry, always uses heuristic
         if is_standup:
             if standup_entry is None:
-                # Use explicit key from block first line if present, else defer to heuristic
-                standup_key = keys[0] if keys else "__standup__"
-                standup_comment = "Hyperion Standup"
                 standup_entry = {
-                    "key": standup_key,
+                    "key": "__standup__",  # always resolved by heuristic at end
                     "minutes": total_minutes if total_minutes > 0 else 30,
-                    "comment": standup_comment,
+                    "comment": "Hyperion Standup",
                     "is_standup": True,
                 }
             continue
 
-        # Skip blocks with no time
-        if total_minutes <= 0:
+        # Skip blocks with no time (unless open-ended — those are deferred)
+        if total_minutes <= 0 and not has_open_ended:
             continue
 
-        # If no explicit keys on first line, try to resolve from full block content
+        # If no explicit keys on first line, try keyword_mappings then charge code inference
+        if not keys:
+            # User-configured keyword mappings (checked first)
+            for km in keyword_mappings:
+                if km.get("keyword", "").lower() in block_text_lower:
+                    keys = [km["key"].upper()]
+                    break
         if not keys:
             for line in block_lines:
                 resolved_key, resolved_label = resolve_charge_code(line, charge_codes, [])
@@ -534,31 +573,61 @@ def parse_entries(text, charge_codes):
         comment_lines = []
         for line in block_lines:
             if TIME_RANGE_RE.search(line):
-                continue  # skip time range lines
+                continue
+            if OPEN_ENDED_RE.search(line) and not TIME_RANGE_RE.search(line):
+                continue  # skip open-ended lines from comment
             if is_skip_line(line):
                 continue
-            # Strip leading Jira keys from the line for cleaner comments
-            cleaned = JIRA_KEY_RE.sub('', line).strip(' /-\u2013\u2014:')
+            cleaned = JIRA_KEY_RE.sub('', line).strip(' /-–—:')
             if cleaned and len(cleaned) > 2:
                 comment_lines.append(cleaned)
         comment = '; '.join(comment_lines[:3]) if comment_lines else keys[0]
 
-        # One entry per block — even if the same key appears in multiple blocks
         primary_key = keys[0].upper()
-        entries.append({
+        entry = {
             "key": primary_key,
             "minutes": total_minutes,
             "comment": comment,
             "is_standup": False,
-        })
-        time_by_key[primary_key] = time_by_key.get(primary_key, 0) + total_minutes
+            "_open_ended": has_open_ended,
+            "_open_ended_start": open_ended_start_min,
+        }
 
-    # Resolve standup placeholder — use explicit key if found, else pick by time distribution
+        if has_open_ended:
+            open_ended_entries.append(entry)
+        else:
+            entries.append(entry)
+            time_by_key[primary_key] = time_by_key.get(primary_key, 0) + total_minutes
+
+    # ── Resolve open-ended entries ────────────────────────────────────────────
+    # Calculate total known minutes (excluding open-ended blocks)
+    known_total = sum(e["minutes"] for e in entries)
+    if standup_entry:
+        known_total += standup_entry["minutes"]
+
+    for oe_entry in open_ended_entries:
+        if open_ended_behavior == "fill_day" and known_total < target_minutes:
+            remaining = target_minutes - known_total
+            oe_entry["minutes"] = remaining
+            oe_entry["comment"] += " [open-ended: filled to daily target]"
+        else:
+            oe_entry["minutes"] = 15  # fixed_15m fallback
+            oe_entry["comment"] += " [open-ended: 15m]"
+        known_total += oe_entry["minutes"]
+        primary_key = oe_entry["key"]
+        entries.append(oe_entry)
+        time_by_key[primary_key] = time_by_key.get(primary_key, 0) + oe_entry["minutes"]
+
+    # Clean up internal fields
+    for e in entries:
+        e.pop("_open_ended", None)
+        e.pop("_open_ended_start", None)
+
+    # ── Resolve standup key via heuristic (always) ────────────────────────────
     if standup_entry is not None:
-        if standup_entry["key"] == "__standup__":
-            standup_key, standup_label = determine_standup_key(charge_codes, time_by_key)
-            standup_entry["key"] = standup_key
-        entries.insert(0, standup_entry)  # standup first
+        standup_key, standup_label = determine_standup_key(charge_codes, time_by_key)
+        standup_entry["key"] = standup_key
+        entries.insert(0, standup_entry)
 
     return entries
 
@@ -632,15 +701,17 @@ def main():
         try:
             config = load_config()
             charge_codes = config.get("charge_codes", {})
+            parsing_rules = config.get("parsing_rules", {})
         except SystemExit:
             charge_codes = {}
+            parsing_rules = {}
         detected_date = extract_date_from_text(text)
         # Scope to just the detected day's section (handles multi-day notes in preview)
         if detected_date:
             day_text = extract_day_section(text, detected_date)
             if day_text.strip():
                 text = day_text
-        entries = parse_entries(text, charge_codes)
+        entries = parse_entries(text, charge_codes, parsing_rules)
         output = {
             "date": detected_date,
             "entries": [
@@ -662,6 +733,7 @@ def main():
     email = jira.get("email", "")
     token = jira.get("token", "")
     charge_codes = config.get("charge_codes", {})
+    parsing_rules = config.get("parsing_rules", {})
     sources = [args.source] if args.source else config.get("sources", ["mac-notes"])
     # Determine log date: CLI flag > parsed from note > today
     log_date = args.date  # may be None at this point
@@ -710,7 +782,7 @@ def main():
     print()
 
     # Parse entries
-    entries = parse_entries(day_text, charge_codes)
+    entries = parse_entries(day_text, charge_codes, parsing_rules)
 
     if not entries:
         print("No parseable time entries found.")

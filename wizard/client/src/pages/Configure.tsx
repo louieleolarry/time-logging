@@ -40,6 +40,12 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
           sources: state.sources,
           charge_codes: state.chargeCodes,
           custom_rules: state.customRules,
+          parsing_rules: {
+            skip_patterns: state.parsingRules.skipPatterns,
+            keyword_mappings: state.parsingRules.keywordMappings,
+            open_ended_time_behavior: state.parsingRules.openEndedTimeBehavior,
+            target_hours_per_day: state.parsingRules.targetHoursPerDay,
+          },
           google_source_url: state.sources.some(s => s.startsWith('google')) ? (state.googleSourceUrl || undefined) : undefined,
           schedule: state.schedule,
         }),
@@ -68,7 +74,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
 
   return (
     <PageShell
-      badge="Step 6 of 8"
+      badge="Step 7 of 10"
       title="Configure"
       subtitle="Review your settings and save the configuration to your Mac."
       footer={
@@ -94,6 +100,9 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
             { label: 'Standup Codes', value: state.chargeCodes.standup.map((c) => c.key).join(', ') || '—' },
             { label: 'Code Review Codes', value: state.chargeCodes.code_review.map((c) => c.key).join(', ') || '—' },
             { label: 'Custom Rules', value: state.customRules.length > 0 ? `${state.customRules.length} rule${state.customRules.length !== 1 ? 's' : ''}` : 'None (defaults apply)' },
+            { label: 'Skip Patterns', value: state.parsingRules.skipPatterns.length > 0 ? state.parsingRules.skipPatterns.join(', ') : 'None' },
+            { label: 'Keyword Mappings', value: state.parsingRules.keywordMappings.length > 0 ? `${state.parsingRules.keywordMappings.length} mapping${state.parsingRules.keywordMappings.length !== 1 ? 's' : ''}` : 'None' },
+            { label: 'Open-ended Time', value: state.parsingRules.openEndedTimeBehavior === 'fill_day' ? `Fill to ${state.parsingRules.targetHoursPerDay}h/day` : 'Fixed 15m' },
             ...(state.googleSourceUrl && state.sources.some(s => s.startsWith('google')) ? [{ label: 'Google Source', value: state.googleSourceUrl }] : []),
           ].map((row, i) => (
             <div key={row.label} className="flex px-4 py-2.5" style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)', borderTop: '1px solid #30363d' }}>

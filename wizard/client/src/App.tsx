@@ -6,6 +6,7 @@ import ChooseSource from './pages/ChooseSource';
 import JiraCredentials from './pages/JiraCredentials';
 import ChargeCodes from './pages/ChargeCodes';
 import InstallDeps from './pages/InstallDeps';
+import ParsingRules from './pages/ParsingRules';
 import Configure from './pages/Configure';
 import TestVerify from './pages/TestVerify';
 import SampleNote from './pages/SampleNote';
@@ -19,6 +20,19 @@ export interface CustomRule {
   label: string;
 }
 
+export interface KeywordMapping {
+  keyword: string;
+  key: string;
+  label: string;
+}
+
+export interface ParsingRulesConfig {
+  skipPatterns: string[];
+  keywordMappings: KeywordMapping[];
+  openEndedTimeBehavior: 'fill_day' | 'fixed_15m';
+  targetHoursPerDay: number;
+}
+
 export interface WizardState {
   sources: Source[];
   jira: { url: string; email: string; token: string };
@@ -28,6 +42,7 @@ export interface WizardState {
     code_review: { label: string; key: string }[];
   };
   customRules: CustomRule[];
+  parsingRules: ParsingRulesConfig;
   /** URL or ID of the linked Google Sheet or Google Doc (when a Google source is selected). */
   googleSourceUrl: string;
   schedule: { time: string; days: string[] };
@@ -40,6 +55,7 @@ export const STEPS = [
   'Jira Credentials',
   'Charge Codes',
   'Install Dependencies',
+  'Parsing Rules',
   'Configure',
   'Test & Verify',
   'Sample Note',
@@ -49,11 +65,19 @@ export const STEPS = [
 // Index of the Done step — used to jump here when already configured
 const DONE_STEP = STEPS.length - 1;
 
+const defaultParsingRules: ParsingRulesConfig = {
+  skipPatterns: [],
+  keywordMappings: [],
+  openEndedTimeBehavior: 'fill_day',
+  targetHoursPerDay: 8.25,
+};
+
 const defaultState: WizardState = {
   sources: [],
   jira: { url: '', email: '', token: '' },
   chargeCodes: { rapid_response: [], standup: [], code_review: [] },
   customRules: [],
+  parsingRules: defaultParsingRules,
   googleSourceUrl: '',
   schedule: { time: '17:30', days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] },
   verifiedAccount: null,
@@ -63,16 +87,11 @@ const defaultState: WizardState = {
 function hydrateState(config: Record<string, unknown>): WizardState {
   const s = { ...defaultState };
 
-  // approach field is ignored — always cron
   if (Array.isArray(config.sources)) s.sources = config.sources as Source[];
 
   if (config.jira && typeof config.jira === 'object') {
     const j = config.jira as Record<string, string>;
-    s.jira = {
-      url: j.url ?? '',
-      email: j.email ?? '',
-      token: j.token ?? '',
-    };
+    s.jira = { url: j.url ?? '', email: j.email ?? '', token: j.token ?? '' };
   }
 
   if (config.charge_codes && typeof config.charge_codes === 'object') {
@@ -86,6 +105,16 @@ function hydrateState(config: Record<string, unknown>): WizardState {
 
   if (Array.isArray(config.custom_rules)) {
     s.customRules = config.custom_rules as CustomRule[];
+  }
+
+  if (config.parsing_rules && typeof config.parsing_rules === 'object') {
+    const pr = config.parsing_rules as Record<string, unknown>;
+    s.parsingRules = {
+      skipPatterns: Array.isArray(pr.skip_patterns) ? pr.skip_patterns as string[] : [],
+      keywordMappings: Array.isArray(pr.keyword_mappings) ? pr.keyword_mappings as KeywordMapping[] : [],
+      openEndedTimeBehavior: (pr.open_ended_time_behavior as 'fill_day' | 'fixed_15m') ?? 'fill_day',
+      targetHoursPerDay: typeof pr.target_hours_per_day === 'number' ? pr.target_hours_per_day : 8.25,
+    };
   }
 
   if (typeof config.google_source_url === 'string') {
@@ -115,8 +144,6 @@ export default function App() {
   const [direction, setDirection] = useState(1);
   const [hydrated, setHydrated] = useState(false);
 
-  // On mount: try to load an existing config and pre-populate all fields.
-  // If already configured, jump straight to the Done page.
   useEffect(() => {
     fetch('/api/config')
       .then((r) => r.json())
@@ -128,7 +155,7 @@ export default function App() {
           }
         }
       })
-      .catch(() => { /* no config yet — use defaults */ })
+      .catch(() => { /* no config yet */ })
       .finally(() => setHydrated(true));
   }, []);
 
@@ -148,6 +175,7 @@ export default function App() {
     <JiraCredentials key="jira" state={state} update={update} onNext={next} onBack={back} />,
     <ChargeCodes key="codes" update={update} onNext={next} onBack={back} />,
     <InstallDeps key="install" state={state} onNext={next} onBack={back} />,
+    <ParsingRules key="parsing" state={state} update={update} onNext={next} onBack={back} />,
     <Configure key="configure" state={state} update={update} onNext={next} onBack={back} />,
     <TestVerify key="verify" state={state} update={update} onNext={next} onBack={back} />,
     <SampleNote key="sample" onNext={next} onBack={back} />,
@@ -160,7 +188,6 @@ export default function App() {
     exit: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
   };
 
-  // Show a brief loading state while we fetch the existing config
   if (!hydrated) {
     return (
       <div className="flex h-screen items-center justify-center" style={{ background: '#0d1117' }}>
