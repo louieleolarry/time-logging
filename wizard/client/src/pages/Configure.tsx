@@ -85,34 +85,7 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
       }
     >
       <div className="space-y-5" style={{ maxWidth: 560 }}>
-        {/* Config summary */}
-        <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #30363d' }}>
-          <div className="px-4 py-3" style={{ background: '#161b22', borderBottom: '1px solid #30363d' }}>
-            <span className="text-xs font-semibold" style={{ color: '#8b949e' }}>Configuration Summary</span>
-          </div>
-          {[
-            { label: 'Approach', value: 'Cron (launchd)' },
-            { label: 'Sources', value: state.sources.join(', ') || '—' },
-            { label: 'Jira URL', value: state.jira.url || '—' },
-            { label: 'Email', value: state.jira.email || '—' },
-            { label: 'API Token', value: state.jira.token ? '••••••••' + state.jira.token.slice(-4) : '—' },
-            { label: 'RR Codes', value: state.chargeCodes.rapid_response.map((c) => c.key).join(', ') || '—' },
-            { label: 'Standup Codes', value: state.chargeCodes.standup.map((c) => c.key).join(', ') || '—' },
-            { label: 'Code Review Codes', value: state.chargeCodes.code_review.map((c) => c.key).join(', ') || '—' },
-            { label: 'Custom Rules', value: state.customRules.length > 0 ? `${state.customRules.length} rule${state.customRules.length !== 1 ? 's' : ''}` : 'None (defaults apply)' },
-            { label: 'Skip Patterns', value: state.parsingRules.skipPatterns.length > 0 ? state.parsingRules.skipPatterns.join(', ') : 'None' },
-            { label: 'Keyword Mappings', value: state.parsingRules.keywordMappings.length > 0 ? `${state.parsingRules.keywordMappings.length} mapping${state.parsingRules.keywordMappings.length !== 1 ? 's' : ''}` : 'None' },
-            { label: 'Open-ended Time', value: state.parsingRules.openEndedTimeBehavior === 'fill_day' ? `Fill to ${state.parsingRules.targetHoursPerDay}h/day` : 'Fixed 15m' },
-            ...(state.googleSourceUrl && state.sources.some(s => s.startsWith('google')) ? [{ label: 'Google Source', value: state.googleSourceUrl }] : []),
-          ].map((row, i) => (
-            <div key={row.label} className="flex px-4 py-2.5" style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)', borderTop: '1px solid #30363d' }}>
-              <span className="text-xs w-40 flex-shrink-0" style={{ color: '#8b949e' }}>{row.label}</span>
-              <span className="text-xs font-mono" style={{ color: '#e6edf3' }}>{row.value}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Schedule */}
+        {/* Schedule — shown first */}
         {
           <div className="rounded-lg p-4" style={{ border: '1px solid #30363d', background: '#161b22' }}>
             <div className="text-xs font-semibold mb-3" style={{ color: '#8b949e' }}>Logging Schedule</div>
@@ -157,6 +130,35 @@ export default function Configure({ state, update, onNext, onBack }: Props) {
             </p>
           </div>
         }
+
+        {/* Config summary */}
+        <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #30363d' }}>
+          <div className="px-4 py-3" style={{ background: '#161b22', borderBottom: '1px solid #30363d' }}>
+            <span className="text-xs font-semibold" style={{ color: '#8b949e' }}>Configuration Summary</span>
+          </div>
+          {[
+            { label: 'Approach', value: 'Cron (launchd)' },
+            { label: 'Sources', value: state.sources.join(', ') || '—' },
+            { label: 'Jira URL', value: state.jira.url || '—' },
+            { label: 'Email', value: state.jira.email || '—' },
+            { label: 'API Token', value: state.jira.token ? '••••••••' + state.jira.token.slice(-4) : '—' },
+            { label: 'RR Codes', value: state.chargeCodes.rapid_response.map((c) => c.key).join(', ') || '—' },
+            { label: 'Standup Codes', value: state.chargeCodes.standup.map((c) => c.key).join(', ') || '—' },
+            { label: 'Code Review Codes', value: state.chargeCodes.code_review.map((c) => c.key).join(', ') || '—' },
+            { label: 'Custom Rules', value: state.customRules.length > 0 ? `${state.customRules.length} rule${state.customRules.length !== 1 ? 's' : ''}` : 'None (defaults apply)' },
+            { label: 'Skip Patterns', value: state.parsingRules.skipPatterns.length > 0 ? state.parsingRules.skipPatterns.join(', ') : 'None' },
+            { label: 'Keyword Mappings', value: state.parsingRules.keywordMappings.length > 0 ? `${state.parsingRules.keywordMappings.length} mapping${state.parsingRules.keywordMappings.length !== 1 ? 's' : ''}` : 'None' },
+            { label: 'Open-ended Time', value: state.parsingRules.openEndedTimeBehavior === 'fill_day' ? `Fill to ${state.parsingRules.targetHoursPerDay}h/day` : 'Fixed 15m' },
+            ...(state.googleSourceUrl && state.sources.some(s => s.startsWith('google')) ? [{ label: 'Google Source', value: state.googleSourceUrl }] : []),
+          ].map((row, i) => (
+            <div key={row.label} className="flex px-4 py-2.5" style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)', borderTop: '1px solid #30363d' }}>
+              <span className="text-xs w-40 flex-shrink-0" style={{ color: '#8b949e' }}>{row.label}</span>
+              <span className="text-xs font-mono" style={{ color: '#e6edf3' }}>{row.value}</span>
+            </div>
+          ))}
+        </div>
+
+
 
         {/* Save button */}
         <div className="flex items-center gap-3">

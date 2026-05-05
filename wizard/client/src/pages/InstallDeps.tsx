@@ -4,17 +4,22 @@ import PageShell from '../components/PageShell';
 
 interface Props {
   state: WizardState;
+  update: (p: Partial<WizardState>) => void;
   onNext: () => void;
   onBack: () => void;
 }
 
 interface LogLine { type: string; text: string; }
 
-export default function InstallDeps({ state, onNext, onBack }: Props) {
+// Step index for Install Dependencies in the STEPS array (0-based: Welcome=0, ChooseSource=1, JiraCredentials=2, InstallDeps=3)
+const INSTALL_STEP_INDEX = 3;
+
+export default function InstallDeps({ state, update, onNext, onBack }: Props) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [running, setRunning] = useState(false);
-  const [done, setDone] = useState(false);
-  const [hasError, setHasError] = useState(false);
+  // Initialize from persisted stepStatus so navigating back restores the result
+  const [done, setDone] = useState(() => state.stepStatus[INSTALL_STEP_INDEX] === 'success' || state.stepStatus[INSTALL_STEP_INDEX] === 'error');
+  const [hasError, setHasError] = useState(() => state.stepStatus[INSTALL_STEP_INDEX] === 'error');
   const termRef = useRef<HTMLDivElement>(null);
 
   const append = (type: string, text: string) =>
@@ -31,6 +36,7 @@ export default function InstallDeps({ state, onNext, onBack }: Props) {
     setLines([]);
     setDone(false);
     setHasError(false);
+    let localError = false;
 
     try {
       const res = await fetch('/api/install', {
@@ -66,9 +72,17 @@ export default function InstallDeps({ state, onNext, onBack }: Props) {
             } else if (msg.type === 'error') {
               append('error', `✗ ${msg.data.label}: ${msg.data.message || `exit ${msg.data.code}`}`);
               setHasError(true);
+              localError = true;
             } else if (msg.type === 'done') {
               append('done', `\n✅ ${msg.data.message}`);
               setDone(true);
+              // Report status to sidebar using localError (avoids stale closure)
+              update({
+                stepStatus: {
+                  ...state.stepStatus,
+                  [INSTALL_STEP_INDEX]: localError ? 'error' : 'success',
+                },
+              });
             }
           } catch {}
         }
@@ -83,7 +97,7 @@ export default function InstallDeps({ state, onNext, onBack }: Props) {
 
   return (
     <PageShell
-      badge="Step 6 of 9"
+      badge="Step 4 of 7"
       title="Install Dependencies"
       subtitle="The wizard will install the required packages for your selected sources. Click Install to begin."
       footer={

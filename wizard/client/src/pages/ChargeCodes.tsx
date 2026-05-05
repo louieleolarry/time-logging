@@ -260,7 +260,7 @@ export default function ChargeCodes({ state, update, onNext, onBack }: Props) {
 
   return (
     <PageShell
-      badge="Step 5 of 9"
+      badge="Step 5 of 7"
       title="Charge Codes"
       subtitle="Configure how your notes are parsed and mapped to Jira. Set up charge codes, custom rules, sample note preview, and parsing behavior."
       footer={
