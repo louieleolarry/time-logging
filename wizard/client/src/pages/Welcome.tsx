@@ -20,13 +20,13 @@ export default function Welcome({ onNext }: WelcomeProps) {
       <div className="grid grid-cols-3 gap-4 mb-10 w-full" style={{ maxWidth: 560 }}>
         {[
           { icon: '🕐', title: 'Log time naturally', desc: 'Paste your task notes — AI parses the issue key, time, and comment automatically.' },
-          { icon: '⚡', title: '73 Jira tools', desc: 'Search, create, update, transition issues, manage sprints, and write Confluence pages.' },
+          { icon: '⚡', title: '73 Jira tools', desc: 'Search, create, update, transition issues, manage sprints, and write Confluence pages.', link: { url: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/', label: 'Jira REST API Reference →' } },
           { icon: '🔀', title: 'Multiple sources', desc: 'Sticky Notes, Mac Notes, Google Docs, or Google Sheets — your choice.' },
         ].map((f) => (
           <div key={f.title} className="select-card" style={{ cursor: 'default' }}>
             <div className="text-xl mb-2">{f.icon}</div>
             <div className="text-xs font-semibold mb-1" style={{ color: '#e6edf3' }}>{f.title}</div>
-            <div className="text-xs leading-relaxed" style={{ color: '#8b949e' }}>{f.desc}</div>
+            <div className="text-xs leading-relaxed" style={{ color: '#8b949e' }}>{f.desc}{f.link && <><br /><a href={f.link.url} target="_blank" rel="noopener noreferrer" style={{ color: '#79c0ff' }}>{f.link.label}</a></>}</div>
           </div>
         ))}
       </div>
