@@ -355,6 +355,9 @@ DURATION_RE = re.compile(
 # Must NOT be preceded by '(' to avoid matching parenthetical notes like (parent-742)
 JIRA_KEY_RE = re.compile(r'(?<!\()\b([A-Za-z][A-Za-z0-9]+-\d+)\b')
 
+# Partial Jira key: project prefix + dash but no issue number (e.g., "mafg-")
+PARTIAL_KEY_RE = re.compile(r'\b([A-Za-z][A-Za-z0-9]+)-(?!\d)', re.IGNORECASE)
+
 def parse_time_range(line):
     """Return duration in minutes from a HH:MM-->HH:MM range, or None.
     
@@ -613,7 +616,11 @@ def parse_entries(text, charge_codes, parsing_rules=None):
                     keys = [resolved_key]
                     break
         if not keys:
-            continue  # can't identify issue — skip
+            partial_m = PARTIAL_KEY_RE.search(block_lines[0])
+            if partial_m:
+                keys = [f"{partial_m.group(1).upper()}-?"]
+            else:
+                continue
 
         # Build comment from description lines (non-key, non-time-range lines)
         comment_lines = []
@@ -728,6 +735,60 @@ def get_day_total_logged_minutes(jira_url, email, token, issue_keys, log_date):
         for seconds, _ in get_existing_worklogs(jira_url, email, token, key, log_date):
             total_seconds += seconds
     return total_seconds // 60
+
+
+def resolve_partial_keys(entries, jira_url, email, token):
+    """Resolve entries with partial keys (e.g., MAFG-?) by searching Jira."""
+    auth = b64encode(f"{email}:{token}".encode()).decode()
+    headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+    search_url = jira_url.rstrip("/") + "/rest/api/3/search/jql"
+
+    for entry in entries:
+        if not entry["key"].endswith("-?"):
+            continue
+        project = entry["key"][:-2]
+        search_text = entry.get("comment", "")
+        words = [re.sub(r'[^a-zA-Z0-9]', '', w) for w in search_text.split()]
+        words = [w for w in words if len(w) > 2]
+        query_text = ' '.join(words[:8])
+
+        matched = False
+        if query_text:
+            jql = f'project = "{project}" AND text ~ "{query_text}" ORDER BY updated DESC'
+            try:
+                resp = requests.get(search_url, headers=headers,
+                                    params={"jql": jql, "maxResults": 1, "fields": "key,summary"},
+                                    timeout=10)
+                if resp.status_code == 200:
+                    issues = resp.json().get("issues", [])
+                    if issues:
+                        entry["key"] = issues[0]["key"]
+                        summary = issues[0]["fields"]["summary"]
+                        print(f"  🔍 Resolved {project}-? → {entry['key']} ({summary})")
+                        matched = True
+            except Exception:
+                pass
+
+        if not matched:
+            jql = f'project = "{project}" ORDER BY updated DESC'
+            try:
+                resp = requests.get(search_url, headers=headers,
+                                    params={"jql": jql, "maxResults": 1, "fields": "key,summary"},
+                                    timeout=10)
+                if resp.status_code == 200:
+                    issues = resp.json().get("issues", [])
+                    if issues:
+                        entry["key"] = issues[0]["key"]
+                        summary = issues[0]["fields"]["summary"]
+                        print(f"  🔍 Resolved {project}-? → {entry['key']} (fallback: {summary})")
+                        matched = True
+            except Exception:
+                pass
+
+        if not matched:
+            print(f"  ⚠️  Could not resolve {project}-? — no matching issue found")
+
+    return [e for e in entries if not e["key"].endswith("-?")]
 
 
 def post_worklog(jira_url, email, token, issue_key, minutes, comment, started_date):
@@ -861,6 +922,7 @@ def main():
         print(f"{'='*60}")
 
         entries = parse_entries(day_text, charge_codes, parsing_rules)
+        entries = resolve_partial_keys(entries, jira_url, email, token)
         if not entries:
             print("  No parseable entries, skipping.")
             continue
