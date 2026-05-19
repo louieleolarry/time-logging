@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 from base64 import b64encode
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 try:
@@ -285,6 +285,52 @@ def extract_day_section(text, target_date):
     # target_date not found in any section — return empty string
     # (caller will handle "no entries" gracefully)
     return ''
+
+
+def extract_all_day_sections(text):
+    """Extract all date-sectioned blocks from a multi-day note.
+    Returns list of (date_str, section_text) in document order.
+    Falls back to [(detected_date, full_text)] for single-day notes.
+    """
+    _date_header_re = re.compile(
+        r'^(?:'
+        r'\d{4}-\d{2}-\d{2}'
+        r'|'
+        r'\d{1,2}/\d{1,2}(?:/\d{2,4})?'
+        r'|'
+        r'(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*[.,]?\s+)?'
+        r'(?:january|february|march|april|may|june|july|august|september|october|november|december'
+        r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*[.,]?\s+\d{1,2}(?:[,.]?\s+\d{4})?'
+        r'|'
+        r'\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december'
+        r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:[,.]?\s+\d{4})?'
+        r')\s*$',
+        re.IGNORECASE
+    )
+
+    lines = text.split('\n')
+    sections = []
+    current_date = None
+    current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if _date_header_re.match(stripped):
+            if current_lines or current_date is not None:
+                sections.append((current_date, current_lines))
+            current_date = extract_date_from_text(stripped)
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines or current_date is not None:
+        sections.append((current_date, current_lines))
+
+    dated = [(d, '\n'.join(ls)) for d, ls in sections if d is not None]
+    if not dated:
+        detected = extract_date_from_text(text) or date.today().isoformat()
+        return [(detected, text)]
+    return dated
 
 
 # ── Time entry parser ──────────────────────────────────────────────────────────
@@ -671,6 +717,19 @@ def get_existing_worklogs(jira_url, email, token, issue_key, log_date):
         return set()
 
 
+def get_day_total_logged_minutes(jira_url, email, token, issue_keys, log_date):
+    """Sum existing worklog minutes across all issue_keys for a given date."""
+    total_seconds = 0
+    seen = set()
+    for key in issue_keys:
+        if key in seen:
+            continue
+        seen.add(key)
+        for seconds, _ in get_existing_worklogs(jira_url, email, token, key, log_date):
+            total_seconds += seconds
+    return total_seconds // 60
+
+
 def post_worklog(jira_url, email, token, issue_key, minutes, comment, started_date):
     """Post a worklog to Jira REST API v3."""
     url = jira_url.rstrip("/") + f"/rest/api/3/issue/{issue_key}/worklog"
@@ -704,6 +763,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Parse and print without posting to Jira")
     parser.add_argument("--date", default=None, help="Date to log for (YYYY-MM-DD). Defaults to today.")
     parser.add_argument("--source", default=None, help="Override source: mac-notes, stickies, google-sheets, google-docs")
+    parser.add_argument("--since", type=int, default=None, help="Only process days within the last N days (default: all)")
     parser.add_argument("--preview-file", default=None, help="Parse a text file and output JSON (used by wizard preview)")
     args = parser.parse_args()
 
@@ -752,15 +812,12 @@ def main():
     charge_codes = config.get("charge_codes", {})
     parsing_rules = config.get("parsing_rules", {})
     sources = [args.source] if args.source else config.get("sources", ["mac-notes"])
-    # Determine log date: CLI flag > parsed from note > today
-    log_date = args.date  # may be None at this point
-
     if not jira_url or not email or not token:
         print("ERROR: Jira credentials missing from config.", file=sys.stderr)
         sys.exit(1)
 
-    # Determine script directory (same dir as this script)
     script_dir = Path(__file__).parent
+    target_minutes = int(parsing_rules.get("target_hours_per_day", 8.25) * 60)
 
     # Read from the first configured source
     source = sources[0] if sources else "mac-notes"
@@ -778,72 +835,91 @@ def main():
         print("No time entries found in source.")
         sys.exit(0)
 
-    # Resolve date: CLI flag > extracted from note > today
-    if not log_date:
-        log_date = extract_date_from_text(text)
-        if log_date:
-            print(f"📅 Date detected from note: {log_date}")
-        else:
-            log_date = date.today().isoformat()
-            print(f"📅 No date found in note — defaulting to today: {log_date}")
+    # Determine which dates to process
+    if args.date:
+        day_sections = [(args.date, extract_day_section(text, args.date))]
+        print(f"📅 Logging for date: {args.date} (from --date flag)")
     else:
-        print(f"📅 Logging for date: {log_date} (from --date flag)")
+        day_sections = extract_all_day_sections(text)
+        if args.since is not None:
+            cutoff = (date.today() - timedelta(days=args.since)).isoformat()
+            day_sections = [(d, t) for d, t in day_sections if d >= cutoff]
+        dates_found = [d for d, _ in day_sections]
+        print(f"📅 Found {len(dates_found)} day(s) to process: {', '.join(dates_found)}")
 
-    # Extract only the section for the target date (handles multi-day notes)
-    day_text = extract_day_section(text, log_date)
-    if not day_text.strip():
-        print(f"No entries found for {log_date} in the note (no matching day section).")
-        sys.exit(0)
-    if day_text is not text:
-        print(f"📋 Multi-day note detected — using only the section for {log_date}")
-    print()
+    grand_success = 0
+    grand_skip = 0
+    grand_entries = 0
+    days_processed = 0
 
-    # Parse entries
-    entries = parse_entries(day_text, charge_codes, parsing_rules)
-
-    if not entries:
-        print("No parseable time entries found.")
-        sys.exit(0)
-
-    # Print summary
-    print(f"{'Issue Key':<15} {'Time':<10} {'Comment'}")
-    print("-" * 60)
-    total_minutes = 0
-    for e in entries:
-        print(f"{e['key']:<15} {minutes_to_jira(e['minutes']):<10} {e['comment']}")
-        total_minutes += e["minutes"]
-    print("-" * 60)
-    print(f"{'TOTAL':<15} {minutes_to_jira(total_minutes)}")
-    print()
-
-    if args.dry_run:
-        print("🔍 Dry run — no entries posted to Jira.")
-        return
-
-    # Post to Jira (with deduplication check against existing Jira worklogs)
-    print("⏫ Posting to Jira...")
-    success_count = 0
-    skip_count = 0
-    for e in entries:
-        # Check Jira for existing worklogs on this date for this issue
-        # Only skip if BOTH duration AND comment text are an exact match
-        existing_worklogs = get_existing_worklogs(jira_url, email, token, e["key"], log_date)
-        entry_seconds = e["minutes"] * 60
-        entry_comment = e["comment"].strip()
-        if (entry_seconds, entry_comment) in existing_worklogs:
-            print(f"  ⏭  {e['key']} — {minutes_to_jira(e['minutes'])} already logged on {log_date} (exact match), skipping")
-            skip_count += 1
+    for log_date, day_text in day_sections:
+        if not day_text.strip():
             continue
-        resp = post_worklog(jira_url, email, token, e["key"], e["minutes"], e["comment"], log_date)
-        if resp.status_code in (200, 201):
-            worklog_id = resp.json().get("id", "?")
-            print(f"  ✓ {e['key']} — {minutes_to_jira(e['minutes'])} logged (worklog {worklog_id})")
-            success_count += 1
-        else:
-            print(f"  ✗ {e['key']} — FAILED: {resp.status_code} {resp.text[:200]}")
 
-    print()
-    print(f"✅ Done — {success_count}/{len(entries)} entries logged, {skip_count} skipped (already logged).")
+        print(f"\n{'='*60}")
+        print(f"📅 {log_date}")
+        print(f"{'='*60}")
+
+        entries = parse_entries(day_text, charge_codes, parsing_rules)
+        if not entries:
+            print("  No parseable entries, skipping.")
+            continue
+
+        # Skip days already filled to target hours
+        if not args.dry_run:
+            unique_keys = list(set(e["key"] for e in entries))
+            existing_minutes = get_day_total_logged_minutes(
+                jira_url, email, token, unique_keys, log_date
+            )
+            if existing_minutes >= target_minutes:
+                print(f"  ⏭  Already has {minutes_to_jira(existing_minutes)} logged "
+                      f"(>= {minutes_to_jira(target_minutes)} target), skipping day.")
+                continue
+
+        print(f"\n  {'Issue Key':<15} {'Time':<10} {'Comment'}")
+        print(f"  {'-'*58}")
+        total_minutes = 0
+        for e in entries:
+            print(f"  {e['key']:<15} {minutes_to_jira(e['minutes']):<10} {e['comment']}")
+            total_minutes += e["minutes"]
+        print(f"  {'-'*58}")
+        print(f"  {'TOTAL':<15} {minutes_to_jira(total_minutes)}")
+
+        if args.dry_run:
+            print(f"  🔍 Dry run — not posted.")
+            grand_entries += len(entries)
+            days_processed += 1
+            continue
+
+        print(f"\n  ⏫ Posting to Jira...")
+        success_count = 0
+        skip_count = 0
+        for e in entries:
+            existing_worklogs = get_existing_worklogs(jira_url, email, token, e["key"], log_date)
+            entry_seconds = e["minutes"] * 60
+            entry_comment = e["comment"].strip()
+            if (entry_seconds, entry_comment) in existing_worklogs:
+                print(f"    ⏭  {e['key']} — {minutes_to_jira(e['minutes'])} already logged, skipping")
+                skip_count += 1
+                continue
+            resp = post_worklog(jira_url, email, token, e["key"], e["minutes"], e["comment"], log_date)
+            if resp.status_code in (200, 201):
+                worklog_id = resp.json().get("id", "?")
+                print(f"    ✓ {e['key']} — {minutes_to_jira(e['minutes'])} logged (worklog {worklog_id})")
+                success_count += 1
+            else:
+                print(f"    ✗ {e['key']} — FAILED: {resp.status_code} {resp.text[:200]}")
+        grand_success += success_count
+        grand_skip += skip_count
+        grand_entries += len(entries)
+        days_processed += 1
+
+    print(f"\n{'='*60}")
+    if args.dry_run:
+        print(f"🔍 Dry run complete — {grand_entries} entries across {days_processed} day(s).")
+    else:
+        print(f"✅ Done — {grand_success}/{grand_entries} entries logged, "
+              f"{grand_skip} skipped, {days_processed} day(s) processed.")
 
 if __name__ == "__main__":
     main()
