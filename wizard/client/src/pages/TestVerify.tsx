@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { type WizardState } from '../App';
 import PageShell from '../components/PageShell';
 
@@ -9,25 +9,141 @@ interface Props {
   onBack: () => void;
 }
 
-function CopyBlock({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+interface RunEvent {
+  type: 'start' | 'stdout' | 'stderr' | 'done' | 'error';
+  text?: string;
+  label?: string;
+  message?: string;
+  code?: number;
+}
+
+function RunButton({ label, mode, date }: { label: string; mode: string; date?: string }) {
+  const [running, setRunning] = useState(false);
+  const [lines, setLines] = useState<RunEvent[]>([]);
+  const [finished, setFinished] = useState(false);
+  const outputRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [lines]);
+
+  const run = async () => {
+    setRunning(true);
+    setFinished(false);
+    setLines([]);
+
+    try {
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, date }),
+      });
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) return;
+
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() || '';
+
+        for (const chunk of chunks) {
+          const match = chunk.match(/^data:\s*(.+)$/m);
+          if (match) {
+            try {
+              const event: RunEvent = JSON.parse(match[1]);
+              setLines((prev) => [...prev, event]);
+              if (event.type === 'done' || event.type === 'error') {
+                setFinished(true);
+                setRunning(false);
+              }
+            } catch { /* skip malformed */ }
+          }
+        }
+      }
+    } catch (err: unknown) {
+      setLines((prev) => [...prev, { type: 'error', message: err instanceof Error ? err.message : 'Connection error' }]);
+      setFinished(true);
+      setRunning(false);
+    }
   };
+
+  const exitCode = lines.find((l) => l.type === 'done')?.code;
+  const success = finished && exitCode === 0;
+  const failed = finished && exitCode !== undefined && exitCode !== 0;
+
   return (
-    <div className="relative rounded-lg overflow-hidden" style={{ background: '#010409', border: '1px solid #30363d' }}>
-      <pre className="text-xs p-4 overflow-x-auto" style={{ color: '#7ee787', fontFamily: 'JetBrains Mono, monospace', margin: 0 }}>
-        {code}
-      </pre>
+    <div className="mb-4">
       <button
-        onClick={copy}
-        className="absolute top-2 right-2 text-xs px-2 py-1 rounded"
-        style={{ background: '#161b22', border: '1px solid #30363d', color: copied ? '#56d364' : '#8b949e', cursor: 'pointer' }}
+        className="btn-primary text-sm px-4 py-2"
+        onClick={run}
+        disabled={running}
+        style={{
+          background: running ? '#1d4ed8' : success ? '#16a34a' : '#2563eb',
+          cursor: running ? 'wait' : 'pointer',
+          opacity: running ? 0.8 : 1,
+        }}
       >
-        {copied ? '✓ Copied' : 'Copy'}
+        {running ? (
+          <span className="flex items-center gap-2">
+            <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            Running...
+          </span>
+        ) : success ? (
+          `✓ ${label}`
+        ) : (
+          `▶ ${label}`
+        )}
       </button>
+
+      {lines.length > 0 && (
+        <div
+          ref={outputRef}
+          className="mt-3 rounded-lg overflow-y-auto"
+          style={{
+            background: '#010409',
+            border: `1px solid ${failed ? 'rgba(248,81,73,0.3)' : success ? 'rgba(22,163,74,0.3)' : '#30363d'}`,
+            maxHeight: 280,
+            fontFamily: 'JetBrains Mono, monospace',
+          }}
+        >
+          <pre className="text-xs p-4 m-0 whitespace-pre-wrap">
+            {lines.map((line, i) => {
+              if (line.type === 'start') return <div key={i} style={{ color: '#79c0ff' }}>$ {line.label}</div>;
+              if (line.type === 'stdout') return <div key={i} style={{ color: '#7ee787' }}>{line.text}</div>;
+              if (line.type === 'stderr') return <div key={i} style={{ color: '#e3b341' }}>{line.text}</div>;
+              if (line.type === 'done') return <div key={i} style={{ color: line.code === 0 ? '#56d364' : '#f85149', marginTop: 8 }}>{line.code === 0 ? '✓' : '✗'} {line.message}</div>;
+              if (line.type === 'error') return <div key={i} style={{ color: '#f85149' }}>Error: {line.message}</div>;
+              return null;
+            })}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DateRunButton() {
+  const [dateValue, setDateValue] = useState('');
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-2">
+        <input
+          type="date"
+          value={dateValue}
+          onChange={(e) => setDateValue(e.target.value)}
+          className="text-xs px-3 py-2 rounded-lg"
+          style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', fontFamily: 'JetBrains Mono, monospace' }}
+        />
+      </div>
+      {dateValue && <RunButton label={`Run for ${dateValue}`} mode="run-date" date={dateValue} />}
     </div>
   );
 }
@@ -63,35 +179,11 @@ export default function TestVerify({ state, update, onBack }: Props) {
 
   const { verifiedAccount } = state;
 
-  // Build run commands based on source
-  const pythonBin = '/usr/bin/python3';
-  const wizardDir = '~/Applications/JiraTimeTracker/wizard';
-  const gdrivScript = '~/skills/jira-time-tracker/scripts/log_from_gdrive.py';
   const isGoogleSheets = state.sources.includes('google-sheets');
   const isGoogleDocs = state.sources.includes('google-docs');
   const isGoogleSource = isGoogleSheets || isGoogleDocs;
   const googleUrl = state.googleSourceUrl?.trim() || '';
   const logPath = `~/.jira-time-tracker/logs/jira-time-tracker.log`;
-
-  let manualCommand: string;
-  let dryRunCommand: string;
-  let specificDateCommand: string;
-
-  if (isGoogleSource && googleUrl) {
-    const flag = isGoogleSheets ? '--sheet' : '--doc';
-    manualCommand = `${pythonBin} ${gdrivScript} ${flag} "${googleUrl}"`;
-    dryRunCommand = `${pythonBin} ${gdrivScript} ${flag} "${googleUrl}" --dry-run`;
-    specificDateCommand = `${pythonBin} ${gdrivScript} ${flag} "${googleUrl}" --date 2026-04-25`;
-  } else if (isGoogleSource) {
-    const flag = isGoogleSheets ? '--sheet' : '--doc';
-    manualCommand = `${pythonBin} ${gdrivScript} ${flag} <YOUR_${isGoogleSheets ? 'SHEET' : 'DOC'}_ID_OR_URL>`;
-    dryRunCommand = `${pythonBin} ${gdrivScript} ${flag} <ID> --dry-run`;
-    specificDateCommand = `${pythonBin} ${gdrivScript} ${flag} <ID> --date 2026-04-25`;
-  } else {
-    manualCommand = `${pythonBin} ${wizardDir}/log-time.py`;
-    dryRunCommand = `${pythonBin} ${wizardDir}/log-time.py --dry-run`;
-    specificDateCommand = `${pythonBin} ${wizardDir}/log-time.py --date 2026-04-25`;
-  }
 
   return (
     <PageShell
@@ -199,22 +291,22 @@ export default function TestVerify({ state, update, onBack }: Props) {
               </div>
             </div>
 
-            {/* Manual trigger */}
-            <div>
-              <div className="text-xs font-semibold mb-2" style={{ color: '#8b949e' }}>Manual trigger — run anytime</div>
-              <CopyBlock code={manualCommand} />
-            </div>
-
             {/* Dry run */}
             <div>
               <div className="text-xs font-semibold mb-2" style={{ color: '#8b949e' }}>Dry run — preview without posting</div>
-              <CopyBlock code={dryRunCommand} />
+              <RunButton label="Dry Run" mode="dry-run" />
+            </div>
+
+            {/* Manual trigger */}
+            <div>
+              <div className="text-xs font-semibold mb-2" style={{ color: '#8b949e' }}>Manual trigger — parse and post to Jira</div>
+              <RunButton label="Run Now" mode="run" />
             </div>
 
             {/* Specific date */}
             <div>
               <div className="text-xs font-semibold mb-2" style={{ color: '#8b949e' }}>Log for a specific date</div>
-              <CopyBlock code={specificDateCommand} />
+              <DateRunButton />
             </div>
 
             {/* Google Drive note */}

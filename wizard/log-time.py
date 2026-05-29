@@ -684,6 +684,90 @@ def parse_entries(text, charge_codes, parsing_rules=None):
 
     return entries
 
+# ── Tempo Timesheet API ──────────────────────────────────────────────────────
+
+def get_jira_account_id(jira_url, email, token):
+    """Resolve the current user's Jira accountId via /rest/api/3/myself."""
+    url = jira_url.rstrip("/") + "/rest/api/3/myself"
+    auth = b64encode(f"{email}:{token}".encode()).decode()
+    headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("accountId")
+    except Exception:
+        pass
+    return None
+
+
+def get_open_timesheet_dates(tempo_token, account_id, candidate_dates):
+    """Query Tempo Timesheets API to find which dates are in OPEN timesheets.
+
+    Returns the subset of candidate_dates (YYYY-MM-DD strings) whose
+    containing timesheet period has status OPEN (i.e. not WAITING_FOR_APPROVAL
+    or APPROVED).  If the Tempo API is unreachable or unconfigured, returns
+    all candidate_dates so processing is not blocked.
+    """
+    if not tempo_token or not account_id or not candidate_dates:
+        return list(candidate_dates)
+
+    sorted_dates = sorted(candidate_dates)
+    from_date = sorted_dates[0]
+    to_date = sorted_dates[-1]
+
+    url = f"https://api.tempo.io/4/timesheet-approvals/user/{account_id}"
+    headers = {
+        "Authorization": f"Bearer {tempo_token}",
+        "Accept": "application/json",
+    }
+    params = {"from": from_date, "to": to_date}
+
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        if resp.status_code != 200:
+            print(f"  ⚠️  Tempo API returned {resp.status_code} — skipping timesheet filter", file=sys.stderr)
+            return list(candidate_dates)
+    except Exception as e:
+        print(f"  ⚠️  Tempo API unreachable ({e}) — skipping timesheet filter", file=sys.stderr)
+        return list(candidate_dates)
+
+    data = resp.json()
+    periods = data.get("results", [])
+    if not periods:
+        # Single-period response (no results wrapper)
+        periods = [data] if "status" in data else []
+
+    # Build a set of dates that fall within OPEN periods
+    open_dates = set()
+    closed_periods = []
+    for period in periods:
+        status = period.get("status", {})
+        status_key = status.get("key", "") if isinstance(status, dict) else str(status)
+        period_from = period.get("from", "")
+        period_to = period.get("to", "")
+        if not period_from or not period_to:
+            continue
+
+        if status_key.upper() == "OPEN":
+            for d in candidate_dates:
+                if period_from <= d <= period_to:
+                    open_dates.add(d)
+        else:
+            closed_periods.append((period_from, period_to, status_key))
+
+    if closed_periods:
+        for pf, pt, st in closed_periods:
+            print(f"  🔒 Timesheet {pf} → {pt} is {st} — skipping those dates")
+
+    # Dates not covered by any period are treated as open
+    for d in candidate_dates:
+        covered = any(pf <= d <= pt for pf, pt, _ in closed_periods)
+        if not covered and d not in open_dates:
+            open_dates.add(d)
+
+    return sorted(open_dates)
+
+
 # ── Jira API ──────────────────────────────────────────────────────────────────
 
 def _extract_comment_text(comment_field):
@@ -907,6 +991,23 @@ def main():
             day_sections = [(d, t) for d, t in day_sections if d >= cutoff]
         dates_found = [d for d, _ in day_sections]
         print(f"📅 Found {len(dates_found)} day(s) to process: {', '.join(dates_found)}")
+
+    # ── Tempo timesheet filter ────────────────────────────────────────────────
+    tempo_token = config.get("tempo", {}).get("token")
+    if tempo_token and not args.dry_run:
+        account_id = get_jira_account_id(jira_url, email, token)
+        if account_id:
+            candidate_dates = [d for d, _ in day_sections]
+            open_dates = get_open_timesheet_dates(tempo_token, account_id, candidate_dates)
+            skipped = set(candidate_dates) - set(open_dates)
+            if skipped:
+                print(f"⏭  Skipping {len(skipped)} day(s) with closed timesheets: {', '.join(sorted(skipped))}")
+                day_sections = [(d, t) for d, t in day_sections if d in open_dates]
+                if not day_sections:
+                    print("No open timesheet days to process.")
+                    sys.exit(0)
+        else:
+            print("  ⚠️  Could not resolve Jira account ID — skipping Tempo filter", file=sys.stderr)
 
     grand_success = 0
     grand_skip = 0

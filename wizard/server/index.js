@@ -14,6 +14,7 @@ import doneRouter from './routes/done.js';
 import parsePreviewRouter from './routes/parse-preview.js';
 import sampleNoteRouter from './routes/sample-note.js';
 import parsingRulesRouter from './routes/parsing-rules.js';
+import runRouter from './routes/run.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -32,6 +33,7 @@ app.use('/api/done', doneRouter);
 app.use('/api/parse-preview', parsePreviewRouter);
 app.use('/api/config/sample-note', sampleNoteRouter);
 app.use('/api/parsing-rules', parsingRulesRouter);
+app.use('/api/run', runRouter);
 
 // Serve built React UI
 const uiPath = path.resolve(__dirname, '..', 'client', 'dist');
