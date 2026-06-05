@@ -209,82 +209,110 @@ def extract_date_from_text(text):
 
 # ── Day-section extractor ────────────────────────────────────────────────────
 
+def _is_day_rule(line):
+    """A long horizontal rule (10+ dash/en-dash/em-dash chars) used to separate
+    day sections. The short '---' / '--' / '–––' separators inside a single day's
+    template are intentionally NOT treated as day boundaries."""
+    return bool(re.match(r'^\s*[-–—]{10,}\s*$', line))
+
+
+# Matches a line that IS a date header (the whole line is just a date). Kept
+# conservative on purpose so a content line that merely mentions a date is not
+# mistaken for a day boundary.
+_DATE_HEADER_RE = re.compile(
+    r'^(?:'
+    # ISO: 2026-04-25
+    r'\d{4}-\d{2}-\d{2}'
+    r'|'
+    # US numeric: 4/25/2026 or 4/25/26 or 4/25
+    r'\d{1,2}/\d{1,2}(?:/\d{2,4})?'
+    r'|'
+    # "Monday, May 5, 2026" or "May 5, 2026" or "May 5 2026" etc.
+    r'(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*[.,]?\s+)?'
+    r'(?:january|february|march|april|may|june|july|august|september|october|november|december'
+    r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*[.,]?\s+\d{1,2}(?:[,.]?\s+\d{4})?'
+    r'|'
+    # Day-first: 25 April 2026
+    r'\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december'
+    r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:[,.]?\s+\d{4})?'
+    r')\s*$',
+    re.IGNORECASE
+)
+
+
+def _split_into_day_sections(text):
+    """Split note text into day sections: list of (date_or_None, [lines]).
+
+    A new day section starts at EITHER a long horizontal rule OR a date-header
+    line. Using BOTH delimiters means a day is still isolated correctly even if
+    one delimiter is missing or malformed in the note — this is the safeguard
+    that prevents one day's entries from bleeding into another day's run.
+    """
+    lines = text.split('\n')
+    sections = []
+    current_date = None
+    current_lines = []
+
+    def flush():
+        nonlocal current_date, current_lines
+        if current_lines or current_date is not None:
+            sections.append((current_date, current_lines))
+        current_date = None
+        current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Long horizontal rule = unambiguous day boundary. Drop the rule itself.
+        if _is_day_rule(line):
+            flush()
+            continue
+
+        # Date-header line. Start a new section only when the current section is
+        # already dated (i.e. we're inside a day); a header that simply follows a
+        # rule line lands in the fresh section and just labels it with its date.
+        if _DATE_HEADER_RE.match(stripped):
+            if current_date is not None:
+                flush()
+            current_date = extract_date_from_text(stripped) or current_date
+            current_lines.append(line)
+            continue
+
+        current_lines.append(line)
+
+    flush()
+    return sections
+
+
 def extract_day_section(text, target_date):
     """
     Given a multi-day note (e.g. a Stickies note with multiple day sections),
     return only the portion that belongs to `target_date` (YYYY-MM-DD).
 
-    A day section is delimited by:
-      - A date header line (any format recognised by extract_date_from_text)
-      - Optionally followed by a '---' separator
+    Day sections are delimited by long horizontal rules and/or date-header lines
+    (see _split_into_day_sections). Only the matching day's lines are returned,
+    so entries from adjacent days can never leak into the wrong day's run.
 
-    Algorithm:
-      1. Walk lines top-to-bottom.
-      2. When a line is recognised as a date header, record which date it is.
-      3. Collect lines until the next date header (or end of text).
-      4. Return the collected lines for the section whose date == target_date.
-
-    If no date headers are found at all (single-day note), the full text is
+    If no dated sections are found at all (single-day note), the full text is
     returned unchanged so existing behaviour is preserved.
     """
-    # Regex that matches a line that IS a date header (same patterns as
-    # extract_date_from_text but tested against the whole line, not just
-    # the first 5 lines).
-    _date_header_re = re.compile(
-        r'^(?:'
-        # ISO: 2026-04-25
-        r'\d{4}-\d{2}-\d{2}'
-        r'|'
-        # US numeric: 4/25/2026 or 4/25/26 or 4/25
-        r'\d{1,2}/\d{1,2}(?:/\d{2,4})?'
-        r'|'
-        # "Monday, May 5, 2026" or "May 5, 2026" or "May 5 2026" etc.
-        r'(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*[.,]?\s+)?'
-        r'(?:january|february|march|april|may|june|july|august|september|october|november|december'
-        r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*[.,]?\s+\d{1,2}(?:[,.]?\s+\d{4})?'
-        r'|'
-        # Day-first: 25 April 2026
-        r'\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december'
-        r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:[,.]?\s+\d{4})?'
-        r')\s*$',
-        re.IGNORECASE
-    )
+    sections = _split_into_day_sections(text)
 
-    lines = text.split('\n')
-
-    # Collect sections: list of (date_str_or_None, [lines])
-    sections = []
-    current_date = None
-    current_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-        if _date_header_re.match(stripped):
-            # Save previous section
-            if current_lines or current_date is not None:
-                sections.append((current_date, current_lines))
-            # Start new section
-            current_date = extract_date_from_text(stripped)
-            current_lines = [line]  # include the header line itself
-        else:
-            current_lines.append(line)
-
-    # Save last section
-    if current_lines or current_date is not None:
-        sections.append((current_date, current_lines))
-
-    # If no date headers were found at all, return original text
-    if all(s[0] is None for s in sections):
+    # No dated sections at all → single-day note; preserve original behaviour.
+    if all(sec_date is None for sec_date, _ in sections):
         return text
 
-    # Find the section matching target_date
-    for sec_date, sec_lines in sections:
-        if sec_date == target_date:
-            return '\n'.join(sec_lines)
-
-    # target_date not found in any section — return empty string
-    # (caller will handle "no entries" gracefully)
-    return ''
+    matching = [sec_lines for sec_date, sec_lines in sections if sec_date == target_date]
+    if not matching:
+        # target_date not found — caller handles "no entries" gracefully.
+        return ''
+    if len(matching) > 1:
+        print(
+            f"⚠️  Found {len(matching)} sections for {target_date} in the note — "
+            f"using the first and ignoring the rest.",
+            file=sys.stderr,
+        )
+    return '\n'.join(matching[0])
 
 
 # ── Time entry parser ──────────────────────────────────────────────────────────
@@ -294,10 +322,29 @@ TIME_RANGE_RE = re.compile(
     r'(\d{1,2}):(\d{2})\s*(?:-->|->|–>|—>|-)\s*(\d{1,2}):(\d{2})'
 )
 
-# Matches open-ended ranges: 4:30--> or 4:30-> or 4:30– (no end time)
+# Matches open-ended ranges with no end time: 4:30-->, 4:30->, and tolerant of
+# trailing placeholders like "4:30-->??" or "4:30--> ?" (trailing ?'s meaning
+# "still going"). A complete range on the same line is excluded by the caller
+# via TIME_RANGE_RE, so loosening the tail here is safe.
 OPEN_ENDED_RE = re.compile(
-    r'(\d{1,2}):(\d{2})\s*(?:-->|->|–>|—>|-+>?)\s*$'
+    r'(\d{1,2}):(\d{2})\s*(?:-->|->|–>|—>|-+>?)\s*\?*\s*$'
 )
+
+
+# Phrases that mean "log the remainder of the day's target hours against this
+# block" (e.g. "all the rest"). Configurable via parsing_rules.fill_phrases.
+DEFAULT_FILL_PHRASES = [
+    "all the rest", "the rest", "rest of the day", "rest of day",
+    "remainder", "remaining time", "fill the rest", "fill day",
+]
+
+def _normalize_phrase(s):
+    s = re.sub(r'[^a-z ]', ' ', (s or "").lower())
+    return re.sub(r'\s+', ' ', s).strip()
+
+def is_fill_phrase(line, phrases):
+    """True if the whole line (ignoring bullets/punctuation) is a fill phrase."""
+    return _normalize_phrase(line) in phrases
 
 # Matches: 1h 30m, 1h, 45m, 45min, 1hr
 DURATION_RE = re.compile(
@@ -359,6 +406,29 @@ def minutes_to_jira(minutes):
         return f"{h}h"
     else:
         return f"{m}m"
+
+def _normalize_comment(comment):
+    """Normalize a comment for in-run duplicate detection: lowercase, replace
+    punctuation/symbols with spaces, and collapse whitespace."""
+    s = (comment or "").lower()
+    s = re.sub(r'[^\w\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip()
+
+def dedup_entries_in_run(entries):
+    """Collapse duplicate blocks within a single run, keyed by
+    (issue key, normalized comment). The first occurrence is kept; later
+    duplicates are dropped (not summed — they represent the same work captured
+    twice). Returns (kept_entries, dropped_entries)."""
+    kept, dropped, seen = [], [], set()
+    for e in entries:
+        sig = (e["key"], _normalize_comment(e["comment"]))
+        if sig in seen:
+            dropped.append(e)
+            continue
+        seen.add(sig)
+        kept.append(e)
+    return kept, dropped
 
 def is_standup_line(line):
     lower = line.lower()
@@ -483,6 +553,7 @@ def parse_entries(text, charge_codes, parsing_rules=None):
     keyword_mappings = parsing_rules.get("keyword_mappings", [])  # [{keyword, key, label}]
     open_ended_behavior = parsing_rules.get("open_ended_time_behavior", "fill_day")
     target_minutes = int(parsing_rules.get("target_hours_per_day", 8.25) * 60)  # default 495
+    fill_phrases = {_normalize_phrase(p) for p in parsing_rules.get("fill_phrases", DEFAULT_FILL_PHRASES)}
 
     entries = []        # final list — one entry per block
     open_ended_entries = []  # blocks with open-ended time ranges (resolved after totalling)
@@ -522,6 +593,11 @@ def parse_entries(text, charge_codes, parsing_rules=None):
                 has_open_ended = True
                 open_ended_start_min = int(oe.group(1)) * 60 + int(oe.group(2))
                 break
+
+        # A fill phrase ("all the rest", …) is also an open-ended marker: keep the
+        # block's explicit ranges and top the day up to target onto this block.
+        if any(is_fill_phrase(l, fill_phrases) for l in block_lines):
+            has_open_ended = True
 
         # Sum all COMPLETE time ranges in the block
         total_minutes = 0
@@ -576,6 +652,8 @@ def parse_entries(text, charge_codes, parsing_rules=None):
                 continue
             if OPEN_ENDED_RE.search(line) and not TIME_RANGE_RE.search(line):
                 continue  # skip open-ended lines from comment
+            if is_fill_phrase(line, fill_phrases):
+                continue  # skip fill-phrase lines ("all the rest") from comment
             if is_skip_line(line):
                 continue
             cleaned = JIRA_KEY_RE.sub('', line).strip(' /-–—:')
@@ -591,6 +669,7 @@ def parse_entries(text, charge_codes, parsing_rules=None):
             "is_standup": False,
             "_open_ended": has_open_ended,
             "_open_ended_start": open_ended_start_min,
+            "_explicit_minutes": total_minutes,
         }
 
         if has_open_ended:
@@ -599,21 +678,30 @@ def parse_entries(text, charge_codes, parsing_rules=None):
             entries.append(entry)
             time_by_key[primary_key] = time_by_key.get(primary_key, 0) + total_minutes
 
-    # ── Resolve open-ended entries ────────────────────────────────────────────
-    # Calculate total known minutes (excluding open-ended blocks)
+    # ── Resolve open-ended / fill entries ─────────────────────────────────────
+    # Known minutes = all explicit time logged that day, INCLUDING the complete
+    # ranges that appear inside open-ended/fill blocks. Those blocks keep their
+    # real ranges and only receive the day's *remainder* on top (so a block with
+    # "7:30-->9:00 / 9:00-->10:00 / all the rest" logs 2.5h + remainder = target).
     known_total = sum(e["minutes"] for e in entries)
     if standup_entry:
         known_total += standup_entry["minutes"]
+    known_total += sum(e["_explicit_minutes"] for e in open_ended_entries)
 
     for oe_entry in open_ended_entries:
+        explicit = oe_entry["_explicit_minutes"]
         if open_ended_behavior == "fill_day" and known_total < target_minutes:
             remaining = target_minutes - known_total
-            oe_entry["minutes"] = remaining
-            oe_entry["comment"] += " [open-ended: filled to daily target]"
+            oe_entry["minutes"] = explicit + remaining
+            tag = "filled to daily target" if explicit else "open-ended: filled to daily target"
+            oe_entry["comment"] += f" [{tag}]"
+            known_total += remaining  # explicit minutes were already counted above
+        elif explicit > 0:
+            oe_entry["minutes"] = explicit  # real ranges stand; nothing left to fill
         else:
-            oe_entry["minutes"] = 15  # fixed_15m fallback
+            oe_entry["minutes"] = 15  # fixed_15m fallback for a pure marker
             oe_entry["comment"] += " [open-ended: 15m]"
-        known_total += oe_entry["minutes"]
+            known_total += 15
         primary_key = oe_entry["key"]
         entries.append(oe_entry)
         time_by_key[primary_key] = time_by_key.get(primary_key, 0) + oe_entry["minutes"]
@@ -622,6 +710,7 @@ def parse_entries(text, charge_codes, parsing_rules=None):
     for e in entries:
         e.pop("_open_ended", None)
         e.pop("_open_ended_start", None)
+        e.pop("_explicit_minutes", None)
 
     # ── Resolve standup key via heuristic (always) ────────────────────────────
     if standup_entry is not None:
@@ -729,6 +818,7 @@ def main():
             if day_text.strip():
                 text = day_text
         entries = parse_entries(text, charge_codes, parsing_rules)
+        entries, _dropped = dedup_entries_in_run(entries)
         output = {
             "date": detected_date,
             "entries": [
@@ -805,6 +895,14 @@ def main():
         print("No parseable time entries found.")
         sys.exit(0)
 
+    # De-dup duplicate blocks within this run (same issue key + normalized comment)
+    entries, dropped = dedup_entries_in_run(entries)
+    for d in dropped:
+        print(f"⚠️  Duplicate block skipped: {d['key']} {minutes_to_jira(d['minutes'])} — "
+              f"\"{d['comment'][:60]}\" (same issue + comment already in this run)")
+    if dropped:
+        print()
+
     # Print summary
     print(f"{'Issue Key':<15} {'Time':<10} {'Comment'}")
     print("-" * 60)
@@ -820,20 +918,32 @@ def main():
         print("🔍 Dry run — no entries posted to Jira.")
         return
 
-    # Post to Jira (with deduplication check against existing Jira worklogs)
+    # Post to Jira (with deduplication checks against existing Jira worklogs).
     print("⏫ Posting to Jira...")
+
+    # Snapshot existing worklogs per issue for this date BEFORE posting (once).
+    # Drives two checks below: the exact-match skip and the issue+date warning.
+    existing_by_key = {}
+    for k in dict.fromkeys(e["key"] for e in entries):
+        existing_by_key[k] = get_existing_worklogs(jira_url, email, token, k, log_date)
+
     success_count = 0
     skip_count = 0
     for e in entries:
-        # Check Jira for existing worklogs on this date for this issue
-        # Only skip if BOTH duration AND comment text are an exact match
-        existing_worklogs = get_existing_worklogs(jira_url, email, token, e["key"], log_date)
+        existing_worklogs = existing_by_key.get(e["key"], set())
         entry_seconds = e["minutes"] * 60
         entry_comment = e["comment"].strip()
+        # Skip ONLY if BOTH duration AND comment text are an exact match.
         if (entry_seconds, entry_comment) in existing_worklogs:
             print(f"  ⏭  {e['key']} — {minutes_to_jira(e['minutes'])} already logged on {log_date} (exact match), skipping")
             skip_count += 1
             continue
+        # Issue+date guard: the issue already has other worklog(s) that day with a
+        # different time/comment. Warn (but still post) so genuine entries aren't
+        # dropped while possible duplicates (e.g. cross-day bleed) are surfaced.
+        if existing_worklogs:
+            print(f"  ⚠️  {e['key']} — already has {len(existing_worklogs)} worklog(s) on {log_date} "
+                  f"with a different time/comment; posting anyway — review for duplicates")
         resp = post_worklog(jira_url, email, token, e["key"], e["minutes"], e["comment"], log_date)
         if resp.status_code in (200, 201):
             worklog_id = resp.json().get("id", "?")
